@@ -1,0 +1,137 @@
+# Second Brain Backend - Cursor Rules
+
+## Project Context
+This is a Python 3.11 FastAPI backend for a mobile-first, offline-first app called "Second Brain".
+The backend supports asynchronous processing, large payload ingestion, and optional AI processing.
+
+## Architecture Principles
+- Backend is NOT in the critical UX path
+- All heavy processing must be asynchronous (Celery workers)
+- Mobile app uploads data in background
+- Backend must be resilient to poor connectivity
+- Use Docker Compose for local development
+- Focus on MVP, avoid overengineering
+
+## Tech Stack
+- Python 3.11
+- FastAPI (API layer)
+- PostgreSQL + pgvector (main database + embeddings)
+- Redis (queue/broker)
+- Celery (background workers)
+- Docker + docker-compose
+
+## Code Style
+- Use type hints throughout
+- Follow PEP 8
+- Use async/await for database operations
+- Use Pydantic for validation
+- Use SQLAlchemy 2.0 async patterns
+
+## AI Processing Rules
+- AI calls must happen ONLY in Celery workers, never in API layer
+- OpenAI API support is OPTIONAL
+- Trial users may not trigger AI jobs
+- Paid users can trigger AI jobs
+- AI calls are capability-based, not plan-hardcoded
+- API keys must NEVER be exposed to clients
+
+## Database Patterns
+- Use SQLAlchemy async sessions
+- Models inherit from `app.models.base.Base`
+- Use UUIDs for primary keys
+- Use pgvector for embeddings (Vector(1536))
+- JSON fields for extensible data (capabilities)
+
+## API Patterns
+- Use FastAPI dependency injection for database sessions
+- Return appropriate HTTP status codes
+- Use Pydantic schemas for request/response validation
+- Keep endpoints thin, delegate to services
+
+## Service Layer
+- Business logic goes in `app/services/`
+- Services are stateless classes with static methods
+- Services handle database transactions
+
+## Worker Patterns
+- Celery tasks go in `app/tasks/`
+- Workers use separate database sessions
+- All AI processing happens in workers
+- Tasks should be idempotent when possible
+
+## Error Handling
+- Use HTTPException for API errors
+- Log errors appropriately
+- Return meaningful error messages
+- Handle database connection errors gracefully
+
+## Testing (Future)
+- Unit tests for services
+- Integration tests for API endpoints
+- Worker task tests
+
+## Documentation
+- Do NOT generate documentation for each change or fix
+- Documentation should be generated only when explicitly requested
+- Use docstrings for public APIs
+- Keep comments minimal but clear
+
+## File Organization
+- Models: `app/models/`
+- Schemas: `app/schemas/`
+- API routes: `app/api/`
+- Services: `app/services/`
+- Workers: `app/workers/`
+- Tasks: `app/tasks/`
+
+## Environment Variables
+- Use `app.config.Settings` for all configuration
+- Never hardcode values
+- Provide sensible defaults
+- Document in `.env.example`
+
+## Docker
+- Use multi-stage builds if needed
+- Keep images small
+- Use health checks
+- Proper dependency ordering in docker-compose
+
+## Git
+- Commit messages should be clear and concise
+- Don't commit `.env` files
+- Don't commit `__pycache__` or `.pyc` files
+
+## Common Patterns
+
+### Database Session
+```python
+async def some_endpoint(db: AsyncSession = Depends(get_db)):
+    # Use db session
+    pass
+```
+
+### Service Method
+```python
+class SomeService:
+    @staticmethod
+    async def do_something(db: AsyncSession, param: str):
+        # Business logic
+        pass
+```
+
+### Celery Task
+```python
+@celery_app.task(name="task_name")
+def task_function(param: str):
+    import asyncio
+    asyncio.run(_async_implementation(param))
+```
+
+## Avoid
+- Overengineering
+- Premature optimization
+- Hardcoding values
+- AI calls in API layer
+- Synchronous database operations
+- Blocking operations in API endpoints
+

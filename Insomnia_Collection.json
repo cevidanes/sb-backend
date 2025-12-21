@@ -1,0 +1,510 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2024-12-21T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2023.5.8",
+  "resources": [
+    {
+      "_id": "req_root",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/",
+      "name": "Root - API Info",
+      "description": "Get API information and version",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1703116800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_health",
+      "parentId": "fld_health",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/health",
+      "name": "Health Check",
+      "description": "Check API health status (database and Redis connectivity)",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1703116800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_create_session",
+      "parentId": "fld_sessions",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/sessions",
+      "name": "Create Session",
+      "description": "Create a new session for the authenticated user",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"session_type\": \"voice\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_content"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_add_block_text",
+      "parentId": "fld_sessions",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/sessions/{{ _.session_id }}/blocks",
+      "name": "Add Voice Block",
+      "description": "Add a voice transcription block to an open session",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"block_type\": \"voice\",\n  \"text_content\": \"This is a sample voice transcription block with meeting notes. We discussed the project timeline and decided to move the deadline forward by two weeks. The team agreed on the new milestones.\",\n  \"metadata\": null\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_content"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800001,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_add_block_image",
+      "parentId": "fld_sessions",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/sessions/{{ _.session_id }}/blocks",
+      "name": "Add Image Block",
+      "description": "Add an image block to an open session",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"block_type\": \"image\",\n  \"media_url\": \"https://example.com/image.jpg\",\n  \"metadata\": \"{\\\"caption\\\": \\\"Whiteboard diagram\\\"}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_content"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800002,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_add_block_mixed",
+      "parentId": "fld_sessions",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/sessions/{{ _.session_id }}/blocks",
+      "name": "Add Marker Block",
+      "description": "Add a marker block (notes/annotations) to an open session",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"block_type\": \"marker\",\n  \"text_content\": \"Marker note: Important decision point in the meeting\",\n  \"metadata\": \"{\\\"timestamp\\\": 300, \\\"importance\\\": \\\"high\\\"}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_content"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800003,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_finalize_session",
+      "parentId": "fld_sessions",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/sessions/{{ _.session_id }}/finalize",
+      "name": "Finalize Session",
+      "description": "Finalize a session and trigger AI processing (if credits available)",
+      "method": "POST",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800004,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_get_credits",
+      "parentId": "fld_me",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/me/credits",
+      "name": "Get Credits",
+      "description": "Get current AI credit balance for authenticated user",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_semantic_search",
+      "parentId": "fld_search",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/search/semantic",
+      "name": "Semantic Search",
+      "description": "Search user's sessions by semantic similarity using embeddings",
+      "method": "POST",
+      "body": {},
+      "parameters": [
+        {
+          "name": "query",
+          "value": "meeting notes about project timeline",
+          "description": "Search query text",
+          "id": "pair_query",
+          "disabled": false
+        },
+        {
+          "name": "limit",
+          "value": "10",
+          "description": "Maximum number of results (1-50)",
+          "id": "pair_limit",
+          "disabled": false
+        },
+        {
+          "name": "threshold",
+          "value": "0.7",
+          "description": "Minimum similarity threshold (0.0-1.0)",
+          "id": "pair_threshold",
+          "disabled": false
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_semantic_search_minimal",
+      "parentId": "fld_search",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/search/semantic?query=project%20deadline",
+      "name": "Semantic Search (Minimal)",
+      "description": "Semantic search with minimal parameters (uses defaults)",
+      "method": "POST",
+      "body": {},
+      "parameters": [
+        {
+          "name": "query",
+          "value": "project deadline",
+          "description": "Search query text",
+          "id": "pair_query_min",
+          "disabled": false
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_auth"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800001,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_stripe_webhook",
+      "parentId": "fld_webhooks",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "url": "{{ _.base_url }}/api/webhooks/stripe",
+      "name": "Stripe Webhook",
+      "description": "Stripe webhook endpoint for credit purchases (requires Stripe signature)",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"id\": \"evt_test_webhook\",\n  \"object\": \"event\",\n  \"api_version\": \"2023-10-16\",\n  \"created\": 1699999999,\n  \"data\": {\n    \"object\": {\n      \"id\": \"cs_test_123\",\n      \"object\": \"checkout.session\",\n      \"metadata\": {\n        \"user_id\": \"{{ _.user_id }}\",\n        \"credits\": \"10\"\n      },\n      \"payment_intent\": \"pi_test_123\",\n      \"status\": \"complete\"\n    }\n  },\n  \"livemode\": false,\n  \"pending_webhooks\": 1,\n  \"request\": {\n    \"id\": \"req_test_123\",\n    \"idempotency_key\": null\n  },\n  \"type\": \"checkout.session.completed\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "stripe-signature",
+          "value": "t=1699999999,v1=signature_here",
+          "description": "Stripe webhook signature (required for verification)",
+          "id": "pair_stripe_sig"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_content"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1703116800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_root",
+      "parentId": null,
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "Second Brain API",
+      "description": "Complete API collection for Second Brain backend",
+      "environment": {
+        "base_url": "http://localhost:8000",
+        "firebase_token": "YOUR_FIREBASE_JWT_TOKEN_HERE",
+        "session_id": "YOUR_SESSION_ID_HERE",
+        "user_id": "YOUR_USER_ID_HERE"
+      },
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1703116800000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_health",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "Health",
+      "description": "Health check endpoints",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1703116800001,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_sessions",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "Sessions",
+      "description": "Session management endpoints (create, add blocks, finalize)",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1703116800002,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_me",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "User Profile",
+      "description": "User-specific endpoints (credits, profile)",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1703116800003,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_search",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "Search",
+      "description": "Semantic search endpoints using embeddings",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1703116800004,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_webhooks",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "Webhooks",
+      "description": "Webhook endpoints for external services (Stripe)",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1703116800005,
+      "_type": "request_group"
+    },
+    {
+      "_id": "env_base",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:8000",
+        "firebase_token": "YOUR_FIREBASE_JWT_TOKEN_HERE",
+        "session_id": "",
+        "user_id": ""
+      },
+      "dataPropertyOrder": {
+        "base_url": 1,
+        "firebase_token": 2,
+        "session_id": 3,
+        "user_id": 4
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1703116800000,
+      "_type": "environment"
+    },
+    {
+      "_id": "env_production",
+      "parentId": "fld_root",
+      "modified": 1703116800000,
+      "created": 1703116800000,
+      "name": "Production",
+      "data": {
+        "base_url": "https://api.secondbrain.com",
+        "firebase_token": "YOUR_PRODUCTION_FIREBASE_JWT_TOKEN_HERE",
+        "session_id": "",
+        "user_id": ""
+      },
+      "dataPropertyOrder": {
+        "base_url": 1,
+        "firebase_token": 2,
+        "session_id": 3,
+        "user_id": 4
+      },
+      "color": "#7d69cb",
+      "isPrivate": false,
+      "metaSortKey": 1703116800001,
+      "_type": "environment"
+    }
+  ]
+}
+
