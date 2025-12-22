@@ -7,11 +7,6 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import select
 from datetime import datetime
 import logging
-import nest_asyncio
-
-# Enable nested event loops for Celery workers
-# This allows asyncio.run() to work even if there's already a running event loop
-nest_asyncio.apply()
 
 from app.config import settings
 from app.models.session import Session, SessionStatus
@@ -53,10 +48,38 @@ def process_session_task(self, session_id: str, ai_job_id: str):
     This task runs in Celery worker, never in API process.
     """
     import asyncio
+    import threading
     
     # Run async code in sync context
-    # nest_asyncio allows this to work even if there's already a running event loop
-    asyncio.run(_process_session_async(session_id, ai_job_id))
+    # Handle event loop properly - check if one already exists
+    try:
+        # Try to get existing loop
+        loop = asyncio.get_running_loop()
+        # If we get here, there's a running loop
+        # Run in a new thread with a new event loop to avoid conflicts
+        result = None
+        exception = None
+        
+        def run_in_thread():
+            nonlocal result, exception
+            try:
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                result = new_loop.run_until_complete(_process_session_async(session_id, ai_job_id))
+                new_loop.close()
+            except Exception as e:
+                exception = e
+        
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join()
+        
+        if exception:
+            raise exception
+        return result
+    except RuntimeError:
+        # No running loop, safe to use asyncio.run()
+        asyncio.run(_process_session_async(session_id, ai_job_id))
 
 
 async def _process_session_async(session_id: str, ai_job_id: str):
