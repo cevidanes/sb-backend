@@ -112,6 +112,27 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 await db.commit()
                 return
             
+            # Check if session should be processed (not NO_CREDITS or RAW_ONLY)
+            if session.status == SessionStatus.NO_CREDITS:
+                logger.warning(
+                    f"Session {session_id} has status NO_CREDITS - skipping AI processing. "
+                    f"Session was saved locally and can be processed later when credits are available."
+                )
+                # Mark AIJob as failed (no processing done)
+                ai_job.status = AIJobStatus.FAILED
+                await db.commit()
+                return
+            
+            if session.status == SessionStatus.RAW_ONLY:
+                logger.warning(
+                    f"Session {session_id} has status RAW_ONLY - skipping AI processing. "
+                    f"This is a legacy status, session was saved without AI processing."
+                )
+                # Mark AIJob as failed (no processing done)
+                ai_job.status = AIJobStatus.FAILED
+                await db.commit()
+                return
+            
             # Update status to processing
             session.status = SessionStatus.PROCESSING
             await db.commit()

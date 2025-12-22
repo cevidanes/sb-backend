@@ -94,8 +94,11 @@ async def finalize_session(
         3. Mark session as PENDING_PROCESSING
         4. Enqueue AI processing task
     - If user has 0 credits:
-        1. Mark session as RAW_ONLY (no AI)
+        1. Mark session as NO_CREDITS (saved locally, no AI processing)
         2. Return immediately
+    
+    Sessions are always saved, even without credits. Users without credits
+    can process sessions later when they have credits available.
     
     This endpoint never blocks waiting for AI processing.
     All AI work happens asynchronously in Celery worker.
@@ -136,22 +139,22 @@ async def finalize_session(
                 )
             else:
                 # Debit failed (race condition - credits depleted)
-                # Finalize without AI
+                # Finalize without AI - session saved locally
                 session = await SessionService.finalize_session(
                     db, session_id, current_user.id, has_credits=False
                 )
                 return SessionFinalizeResponse(
-                    message="Session finalized without AI processing (insufficient credits).",
+                    message="Session finalized without AI processing (insufficient credits). Session saved locally.",
                     session_id=session_id,
                     status=session.status
                 )
         else:
-            # No credits - finalize without AI
+            # No credits - finalize without AI - session saved locally
             session = await SessionService.finalize_session(
                 db, session_id, current_user.id, has_credits=False
             )
             return SessionFinalizeResponse(
-                message="Session finalized without AI processing (no credits available).",
+                message="Session finalized without AI processing (no credits available). Session saved locally.",
                 session_id=session_id,
                 status=session.status
             )
@@ -164,5 +167,118 @@ async def finalize_session(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to finalize session: {str(e)}"
+        )
+
+
+@router.get("/{session_id}", response_model=SessionResponse)
+async def get_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get a session by ID.
+    Requires valid Firebase JWT token.
+    Returns 404 if session not found or doesn't belong to user.
+    """
+    try:
+        session = await SessionService.get_session(
+            db,
+            session_id=session_id,
+            user_id=current_user.id
+        )
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or does not belong to user"
+            )
+        return SessionResponse.model_validate(session)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get session: {str(e)}"
+        )
+
+
+@router.get("/{session_id}/blocks", response_model=list[BlockResponse])
+async def get_session_blocks(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get all blocks for a session.
+    Requires valid Firebase JWT token.
+    Returns 404 if session not found or doesn't belong to user.
+    """
+    try:
+        # Verify session exists and belongs to user
+        session = await SessionService.get_session(
+            db,
+            session_id=session_id,
+            user_id=current_user.id
+        )
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or does not belong to user"
+            )
+        
+        # Get all blocks for this session
+        from sqlalchemy import select
+        from app.models.session_block import SessionBlock
+        result = await db.execute(
+            select(SessionBlock).where(SessionBlock.session_id == session_id)
+        )
+        blocks = result.scalars().all()
+        
+        return [BlockResponse.model_validate(block) for block in blocks]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get session blocks: {str(e)}"
+        )
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete a session and all related data.
+    Requires valid Firebase JWT token.
+    
+    This will delete:
+    - The session itself
+    - All blocks associated with the session
+    - All AI jobs associated with the session
+    - All embeddings associated with the session
+    - All media files associated with the session
+    
+    Returns 204 No Content on success.
+    Returns 400 if session not found or doesn't belong to user.
+    """
+    try:
+        await SessionService.delete_session(
+            db,
+            session_id=session_id,
+            user_id=current_user.id
+        )
+        return None  # FastAPI will return 204 No Content
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete session: {str(e)}"
         )
 

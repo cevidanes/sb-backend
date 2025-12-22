@@ -33,6 +33,7 @@ CONTENT_TYPE_EXTENSIONS = {
     'audio/webm': 'webm',
     'audio/ogg': 'ogg',
     'audio/aac': 'aac',
+    'audio/pcm': 'pcm',  # Raw PCM audio data
     # Images
     'image/jpeg': 'jpg',
     'image/jpg': 'jpg',
@@ -46,7 +47,7 @@ CONTENT_TYPE_EXTENSIONS = {
 ALLOWED_CONTENT_TYPES = {
     MediaType.AUDIO: [
         'audio/m4a', 'audio/mp4', 'audio/mpeg', 'audio/mp3',
-        'audio/wav', 'audio/webm', 'audio/ogg', 'audio/aac'
+        'audio/wav', 'audio/webm', 'audio/ogg', 'audio/aac', 'audio/pcm'
     ],
     MediaType.IMAGE: [
         'image/jpeg', 'image/jpg', 'image/png',

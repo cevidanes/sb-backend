@@ -201,7 +201,7 @@ class TestSessionEndpoints:
         assert response.status_code == 202
         data = response.json()
         assert "no credits" in data["message"].lower() or "without AI" in data["message"]
-        assert data["status"] == "raw_only"
+        assert data["status"] == "no_credits"
     
     @pytest.mark.asyncio
     async def test_finalize_session_no_blocks(
@@ -227,6 +227,50 @@ class TestSessionEndpoints:
         
         # Session not found should return 400 (Bad Request) or 500 if error handling differs
         assert response.status_code in [400, 500]
+    
+    @pytest.mark.asyncio
+    async def test_delete_session_success(
+        self,
+        client: AsyncClient,
+        test_session: Session
+    ):
+        """Test successfully deleting a session."""
+        response = await client.delete(
+            f"/api/sessions/{test_session.id}"
+        )
+        
+        assert response.status_code == 204
+        
+        # Verify session was deleted by trying to delete it again
+        # Should return 400 (not found or access denied)
+        delete_again_response = await client.delete(
+            f"/api/sessions/{test_session.id}"
+        )
+        assert delete_again_response.status_code == 400
+    
+    @pytest.mark.asyncio
+    async def test_delete_session_not_found(self, client: AsyncClient):
+        """Test deleting non-existent session."""
+        import uuid
+        response = await client.delete(
+            f"/api/sessions/{uuid.uuid4()}"
+        )
+        
+        assert response.status_code == 400
+        assert "not found" in response.json()["detail"].lower() or "access denied" in response.json()["detail"].lower()
+    
+    @pytest.mark.asyncio
+    async def test_delete_session_with_blocks(
+        self,
+        client: AsyncClient,
+        test_session_with_block: Session
+    ):
+        """Test deleting a session with blocks."""
+        response = await client.delete(
+            f"/api/sessions/{test_session_with_block.id}"
+        )
+        
+        assert response.status_code == 204
 
 
 class TestMeEndpoints:

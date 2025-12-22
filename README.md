@@ -339,7 +339,8 @@ CREATE TABLE sessions (
 | `PENDING_PROCESSING` | Finalizada, aguardando AI |
 | `PROCESSING` | AI processando |
 | `PROCESSED` | AI concluído com sucesso |
-| `RAW_ONLY` | Finalizada sem AI (sem créditos) |
+| `NO_CREDITS` | Finalizada sem AI (sem créditos, salva localmente) |
+| `RAW_ONLY` | Finalizada sem AI (legado, use NO_CREDITS) |
 | `FAILED` | Erro no processamento |
 
 ### SessionBlock (Bloco)
@@ -561,9 +562,9 @@ Authorization: Bearer <firebase_jwt>
 **Response (202) - Sem créditos:**
 ```json
 {
-  "message": "Session finalized without AI processing (no credits available).",
+  "message": "Session finalized without AI processing (no credits available). Session saved locally.",
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "raw_only"
+  "status": "no_credits"
 }
 ```
 
@@ -728,10 +729,10 @@ Finalize Session
    Yes        No
     │         │
     ▼         ▼
-┌────────┐  ┌────────────┐
-│ Debit  │  │ RAW_ONLY   │
-│ Credit │  │ (no AI)    │
-└───┬────┘  └────────────┘
+┌────────┐  ┌──────────────┐
+│ Debit  │  │ NO_CREDITS   │
+│ Credit │  │ (saved local)│
+└───┬────┘  └──────────────┘
     │
     ▼
 ┌────────────────┐

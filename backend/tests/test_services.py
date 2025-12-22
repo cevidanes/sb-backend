@@ -144,7 +144,7 @@ class TestSessionService:
             has_credits=False
         )
         
-        assert session.status == SessionStatus.RAW_ONLY
+        assert session.status == SessionStatus.NO_CREDITS
         assert session.finalized_at is not None
     
     @pytest.mark.asyncio
