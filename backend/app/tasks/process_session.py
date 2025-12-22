@@ -7,6 +7,11 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import select
 from datetime import datetime
 import logging
+import nest_asyncio
+
+# Enable nested event loops for Celery workers
+# This allows asyncio.run() to work even if there's already a running event loop
+nest_asyncio.apply()
 
 from app.config import settings
 from app.models.session import Session, SessionStatus
@@ -50,6 +55,7 @@ def process_session_task(self, session_id: str, ai_job_id: str):
     import asyncio
     
     # Run async code in sync context
+    # nest_asyncio allows this to work even if there's already a running event loop
     asyncio.run(_process_session_async(session_id, ai_job_id))
 
 
