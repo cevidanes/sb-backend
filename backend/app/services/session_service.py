@@ -3,15 +3,36 @@ Session service for business logic around sessions.
 Handles session creation, block addition, finalization, and deletion.
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text
 from datetime import datetime
 from typing import Optional
+import json
+import os
 
 from app.models.session import Session, SessionStatus
 from app.models.session_block import SessionBlock, BlockType
 from app.models.ai_job import AIJob
 from app.models.embedding import Embedding
 from app.models.media_file import MediaFile
+
+# #region agent log
+DEBUG_LOG_PATH = "/Users/cevidanes/projects/SecondBrain/.cursor/debug.log"
+def _log_debug(location, message, data, hypothesis_id="A"):
+    try:
+        log_entry = {
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now().timestamp() * 1000)
+        }
+        with open(DEBUG_LOG_PATH, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+    except Exception:
+        pass
+# #endregion agent log
 
 
 class SessionService:
@@ -31,13 +52,107 @@ class SessionService:
             session_type: Type of session (voice, image, mixed, etc.)
             user_id: Authenticated user's ID (required)
         """
+        # #region agent log
+        _log_debug(
+            "session_service.py:34",
+            "create_session entry",
+            {
+                "session_type": session_type,
+                "user_id": user_id,
+                "SessionStatus.OPEN": str(SessionStatus.OPEN),
+                "SessionStatus.OPEN.value": SessionStatus.OPEN.value,
+                "SessionStatus.OPEN.name": SessionStatus.OPEN.name
+            },
+            "A"
+        )
+        # #endregion agent log
+        
+        # #region agent log
+        try:
+            result = await db.execute(text("SELECT unnest(enum_range(NULL::sessionstatus))::text"))
+            enum_values = [row[0] for row in result.fetchall()]
+            _log_debug(
+                "session_service.py:48",
+                "Database enum values check",
+                {"enum_values": enum_values},
+                "B"
+            )
+        except Exception as e:
+            _log_debug(
+                "session_service.py:54",
+                "Failed to check enum values",
+                {"error": str(e)},
+                "B"
+            )
+        # #endregion agent log
+        
+        # #region agent log
+        _log_debug(
+            "session_service.py:60",
+            "Before creating Session object",
+            {
+                "status_value": SessionStatus.OPEN.value,
+                "status_type": type(SessionStatus.OPEN.value).__name__
+            },
+            "C"
+        )
+        # #endregion agent log
+        
         session = Session(
             user_id=user_id,
             session_type=session_type,
             status=SessionStatus.OPEN
         )
+        
+        # #region agent log
+        _log_debug(
+            "session_service.py:72",
+            "After creating Session object, before db.add",
+            {
+                "session.status": str(session.status),
+                "session.status.value": session.status.value if hasattr(session.status, 'value') else None,
+                "session.status type": type(session.status).__name__
+            },
+            "D"
+        )
+        # #endregion agent log
+        
         db.add(session)
-        await db.commit()
+        
+        # #region agent log
+        _log_debug(
+            "session_service.py:84",
+            "After db.add, before commit",
+            {"session_id": str(session.id) if hasattr(session, 'id') else None},
+            "E"
+        )
+        # #endregion agent log
+        
+        try:
+            await db.commit()
+            # #region agent log
+            _log_debug(
+                "session_service.py:92",
+                "After commit success",
+                {"session_id": str(session.id)},
+                "E"
+            )
+            # #endregion agent log
+        except Exception as e:
+            # #region agent log
+            _log_debug(
+                "session_service.py:100",
+                "Commit failed with exception",
+                {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "status_value_attempted": SessionStatus.OPEN.value
+                },
+                "E"
+            )
+            # #endregion agent log
+            raise
+        
         await db.refresh(session)
         return session
     
