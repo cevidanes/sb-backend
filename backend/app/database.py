@@ -52,6 +52,7 @@ async def init_db():
     from app.models.embedding import Embedding
     from app.models.ai_job import AIJob
     from app.models.media_file import MediaFile
+    from app.models.payment import Payment
     from sqlalchemy import text
     import json
     import os

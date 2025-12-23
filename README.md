@@ -437,6 +437,9 @@ CREATE TABLE ai_jobs (
 | POST | `/api/uploads/presign` | Gerar URL de upload | ✅ |
 | POST | `/api/uploads/commit` | Confirmar upload | ✅ |
 | POST | `/api/search/semantic` | Busca semântica | ✅ |
+| GET | `/api/payments/packages` | Listar pacotes de créditos | ❌ |
+| POST | `/api/payments/checkout` | Criar sessão de checkout Stripe | ✅ |
+| GET | `/api/payments/history` | Histórico de pagamentos | ✅ |
 | POST | `/api/webhooks/stripe` | Webhook Stripe | ❌* |
 
 *Usa assinatura Stripe para validação
@@ -657,6 +660,135 @@ Authorization: Bearer <firebase_jwt>
   "total_results": 1
 }
 ```
+
+---
+
+### Pacotes de Créditos (Payments)
+
+#### Listar Pacotes Disponíveis
+
+```http
+GET /api/payments/packages
+```
+
+**Response:**
+```json
+{
+  "packages": [
+    {
+      "id": "starter",
+      "name": "Starter Pack",
+      "credits": 10,
+      "price_cents": 499,
+      "price_formatted": "$4.99",
+      "currency": "usd",
+      "description": "Perfect for trying out SecondBrain",
+      "popular": false,
+      "price_per_credit": 49.9
+    },
+    {
+      "id": "popular",
+      "name": "Popular Pack",
+      "credits": 50,
+      "price_cents": 1999,
+      "price_formatted": "$19.99",
+      "currency": "usd",
+      "description": "Best value for regular users",
+      "popular": true,
+      "price_per_credit": 39.98
+    },
+    {
+      "id": "pro",
+      "name": "Pro Pack",
+      "credits": 100,
+      "price_cents": 3499,
+      "price_formatted": "$34.99",
+      "currency": "usd",
+      "description": "For power users",
+      "popular": false,
+      "price_per_credit": 34.99
+    },
+    {
+      "id": "enterprise",
+      "name": "Enterprise Pack",
+      "credits": 500,
+      "price_cents": 14999,
+      "price_formatted": "$149.99",
+      "currency": "usd",
+      "description": "Maximum credits for heavy usage",
+      "popular": false,
+      "price_per_credit": 29.998
+    }
+  ]
+}
+```
+
+---
+
+#### Criar Checkout Session
+
+```http
+POST /api/payments/checkout
+Authorization: Bearer <firebase_jwt>
+Content-Type: application/json
+
+{
+  "package_id": "popular",
+  "success_url": "secondbrain://payment/success",
+  "cancel_url": "secondbrain://payment/cancel"
+}
+```
+
+**Response:**
+```json
+{
+  "checkout_url": "https://checkout.stripe.com/c/pay/cs_test_...",
+  "session_id": "cs_test_...",
+  "expires_at": 1703385600
+}
+```
+
+**Notas:**
+- O `checkout_url` deve ser aberto em um browser/webview
+- `success_url` e `cancel_url` podem ser deep links do app
+- A sessão expira em ~24 horas
+
+---
+
+#### Histórico de Pagamentos
+
+```http
+GET /api/payments/history?limit=20
+Authorization: Bearer <firebase_jwt>
+```
+
+**Response:**
+```json
+{
+  "payments": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "credits_amount": 50,
+      "amount_cents": 1999,
+      "currency": "usd",
+      "status": "completed",
+      "package_id": "popular",
+      "created_at": "2025-12-21T17:30:00.000Z",
+      "completed_at": "2025-12-21T17:31:00.000Z"
+    }
+  ],
+  "total_credits_purchased": 50
+}
+```
+
+**Status possíveis:**
+
+| Status | Descrição |
+|--------|-----------|
+| `pending` | Checkout iniciado, aguardando pagamento |
+| `completed` | Pagamento confirmado, créditos adicionados |
+| `failed` | Pagamento falhou |
+| `refunded` | Pagamento estornado |
 
 ---
 

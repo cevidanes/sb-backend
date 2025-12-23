@@ -6,13 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import stripe
-import json
 import logging
 
 from app.database import get_db
 from app.config import settings
 from app.models.user import User
 from app.services.credit_service import CreditService
+from app.services.stripe_service import stripe_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -32,16 +32,17 @@ async def stripe_webhook(
     Stripe webhook endpoint for processing payment events.
     
     Handles:
-    - checkout.session.completed: Credits user account based on metadata
+    - checkout.session.completed: Credits user account and updates payment record
     
     Security:
     - Validates Stripe signature
-    - Idempotent handling (prevents duplicate credit grants)
+    - Idempotent handling via Payment record (prevents duplicate credit grants)
     
     Expected metadata format:
     {
         "user_id": "<user_uuid>",
-        "credits": "<integer>"
+        "credits": "<integer>",
+        "package_id": "<package_id>"
     }
     """
     if not settings.stripe_webhook_secret:
@@ -83,6 +84,8 @@ async def stripe_webhook(
     # Handle checkout.session.completed event
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
+        checkout_session_id = session.get("id")
+        payment_intent_id = session.get("payment_intent")
         
         # Extract metadata
         metadata = session.get("metadata", {})
@@ -91,7 +94,7 @@ async def stripe_webhook(
         
         if not user_id or not credits_amount:
             logger.warning(
-                f"Missing metadata in checkout session {session.get('id')}: "
+                f"Missing metadata in checkout session {checkout_session_id}: "
                 f"user_id={user_id}, credits={credits_amount}"
             )
             return {"status": "ignored", "reason": "missing_metadata"}
@@ -112,9 +115,21 @@ async def stripe_webhook(
             logger.warning(f"User {user_id} not found for Stripe webhook")
             return {"status": "ignored", "reason": "user_not_found"}
         
-        # Idempotency check: Use Stripe payment intent ID if available
-        # This prevents duplicate credit grants if webhook is called multiple times
-        payment_intent_id = session.get("payment_intent")
+        # Mark payment as completed (idempotency check built-in)
+        # Returns None if already completed
+        payment = await stripe_service.mark_payment_completed(
+            db=db,
+            stripe_checkout_session_id=checkout_session_id,
+            stripe_payment_intent_id=payment_intent_id,
+        )
+        
+        if payment is None:
+            # Payment was already processed (idempotent)
+            logger.info(f"Payment for session {checkout_session_id} already processed")
+            return {
+                "status": "already_processed",
+                "session_id": checkout_session_id
+            }
         
         # Credit user account
         try:
@@ -122,16 +137,26 @@ async def stripe_webhook(
             await db.commit()
             logger.info(
                 f"Credited {credits_amount} credits to user {user_id} "
-                f"(payment_intent: {payment_intent_id})"
+                f"(payment_id: {payment.id}, payment_intent: {payment_intent_id})"
             )
             return {
                 "status": "success",
                 "user_id": user_id,
-                "credits_added": credits_amount
+                "credits_added": credits_amount,
+                "payment_id": str(payment.id)
             }
         except ValueError as e:
             logger.error(f"Error crediting user {user_id}: {e}")
+            await db.rollback()
             return {"status": "error", "reason": str(e)}
+    
+    # Handle payment failed event
+    if event["type"] == "checkout.session.expired":
+        session = event["data"]["object"]
+        checkout_session_id = session.get("id")
+        logger.info(f"Checkout session expired: {checkout_session_id}")
+        # Could update payment status to FAILED here if needed
+        return {"status": "logged", "event_type": event["type"]}
     
     # Log unhandled event types
     logger.info(f"Unhandled event type: {event['type']}")

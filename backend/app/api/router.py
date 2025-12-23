@@ -3,7 +3,7 @@ API router aggregator.
 Includes all route modules.
 """
 from fastapi import APIRouter
-from app.api import health, sessions, me, webhooks, search, uploads, admin
+from app.api import health, sessions, me, webhooks, search, uploads, admin, payments
 
 api_router = APIRouter()
 
@@ -15,4 +15,5 @@ api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"]
 api_router.include_router(search.router, prefix="/search", tags=["search"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 

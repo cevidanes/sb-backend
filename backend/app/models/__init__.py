@@ -8,6 +8,7 @@ from app.models.session_block import SessionBlock
 from app.models.ai_usage import AIUsage
 from app.models.embedding import Embedding
 from app.models.ai_job import AIJob
+from app.models.payment import Payment, PaymentStatus
 
 __all__ = [
     "Base",
@@ -17,5 +18,7 @@ __all__ = [
     "AIUsage",
     "Embedding",
     "AIJob",
+    "Payment",
+    "PaymentStatus",
 ]
 

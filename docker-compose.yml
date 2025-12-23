@@ -49,6 +49,9 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-dev}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-projectsecondbrain}
       FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-./firebase-credentials.json}
+      # Stripe Payment Processing
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Cloudflare R2 / S3-compatible storage
       R2_ENDPOINT: ${R2_ENDPOINT:-}
       R2_BUCKET: ${R2_BUCKET:-brainglass-media}
