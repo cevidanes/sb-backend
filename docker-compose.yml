@@ -44,7 +44,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-${GROQ_API_KEY:-}}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
       AI_PROVIDER: ${AI_PROVIDER:-deepseek}
       ENVIRONMENT: ${ENVIRONMENT:-dev}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-projectsecondbrain}
@@ -78,7 +78,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-${GROQ_API_KEY:-}}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
       AI_PROVIDER: ${AI_PROVIDER:-deepseek}
       ENVIRONMENT: ${ENVIRONMENT:-dev}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-projectsecondbrain}
