@@ -18,7 +18,7 @@ def get_llm_provider() -> LLMProvider:
     Provider selection is controlled by AI_PROVIDER environment variable:
     - "openai" → OpenAIProvider
     - "deepseek" → DeepSeekProvider
-    - Default: "openai" if not set
+    - Default: "deepseek" if not set (prioritized for cost efficiency)
     
     Returns:
         LLMProvider instance
@@ -26,7 +26,7 @@ def get_llm_provider() -> LLMProvider:
     Raises:
         ValueError: If provider is misconfigured or invalid
     """
-    provider_name = (settings.ai_provider or "openai").lower()
+    provider_name = (settings.ai_provider or "deepseek").lower()
     
     if provider_name == "openai":
         provider = OpenAIProvider()
@@ -60,5 +60,5 @@ def get_provider_name() -> str:
     Returns:
         Provider name string ("openai" or "deepseek")
     """
-    return (settings.ai_provider or "openai").lower()
+    return (settings.ai_provider or "deepseek").lower()
 

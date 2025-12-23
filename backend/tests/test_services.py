@@ -219,6 +219,7 @@ class TestCreditService:
         initial_balance = await CreditService.get_balance(db_session, test_user.id)
         
         result = await CreditService.debit(db_session, test_user.id, amount=1)
+        await db_session.commit()
         
         assert result is True
         new_balance = await CreditService.get_balance(db_session, test_user.id)
@@ -248,6 +249,7 @@ class TestCreditService:
         initial_balance = await CreditService.get_balance(db_session, test_user.id)
         
         await CreditService.credit(db_session, test_user.id, amount=5)
+        await db_session.commit()
         
         new_balance = await CreditService.get_balance(db_session, test_user.id)
         assert new_balance == initial_balance + 5

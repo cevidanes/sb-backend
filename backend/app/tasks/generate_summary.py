@@ -1,16 +1,17 @@
 """
-Celery task for processing finalized sessions with AI.
-This is where async AI processing happens - never in the API layer.
-Uses credit-based system: one session processing = 1 credit (already debited).
+Celery task for generating enriched summaries.
+Collects all session blocks (text, transcriptions, image descriptions) and generates summary.
 """
+import asyncio
+import threading
+import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select
 from datetime import datetime
-import logging
 
 from app.config import settings
 from app.models.session import Session, SessionStatus
-from app.models.session_block import SessionBlock
+from app.models.session_block import SessionBlock, BlockType
 from app.models.ai_job import AIJob, AIJobStatus
 from app.ai.factory import get_llm_provider, get_provider_name
 from app.utils.text_chunker import chunk_text
@@ -19,74 +20,101 @@ from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Create async engine for worker (separate from API)
-worker_engine = create_async_engine(
-    settings.database_url,
-    echo=False,
-    pool_pre_ping=True,
-)
-WorkerSessionLocal = async_sessionmaker(
-    worker_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+# Create worker engine and sessionmaker (separate to avoid event loop conflicts)
+worker_engine = None
+WorkerSessionLocal = None
+
+def get_worker_session_local():
+    """Get or create worker session local, creating a new engine if needed."""
+    global worker_engine, WorkerSessionLocal
+    if worker_engine is None:
+        worker_engine = create_async_engine(
+            settings.database_url,
+            echo=False,
+            pool_pre_ping=True,
+        )
+    if WorkerSessionLocal is None:
+        WorkerSessionLocal = async_sessionmaker(
+            worker_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+    return WorkerSessionLocal
 
 
-@celery_app.task(name="process_session", bind=True, max_retries=3)
-def process_session_task(self, session_id: str, ai_job_id: str):
+@celery_app.task(name="generate_summary", bind=True, max_retries=3)
+def generate_summary_task(self, previous_result: dict):
     """
-    Process a finalized session with AI processing.
+    Generate enriched summary from all session blocks.
     
     Flow:
-    1. Fetch session, blocks, and AIJob
-    2. Generate embeddings for text content
-    3. Generate summary
-    4. Update AIJob status to completed
+    1. Extract session_id from previous worker result
+    2. Collect all blocks:
+       - text (frontend transcription)
+       - transcription_backend (Groq Whisper)
+       - image_description (DeepSeek Vision)
+    3. Generate embeddings for all text content
+    4. Generate enriched summary and title
     5. Update session status to processed
     
-    Credits are already debited before this task is enqueued.
-    This task runs in Celery worker, never in API process.
+    Args:
+        previous_result: Dict from previous worker with session_id and ai_job_id
+        
+    Returns:
+        Dict with session_id and ai_job_id
     """
     import asyncio
     import threading
     
+    session_id = previous_result.get("session_id")
+    ai_job_id = previous_result.get("ai_job_id")
+    
+    if not session_id:
+        logger.error("No session_id in previous_result")
+        return previous_result
+    
     # Run async code in sync context
-    # Handle event loop properly - check if one already exists
+    # Celery workers run in separate processes, so we can safely use asyncio.run
+    # But we need to create a fresh event loop to avoid conflicts
+    import asyncio
+    loop = None
     try:
         # Try to get existing loop
-        loop = asyncio.get_running_loop()
-        # If we get here, there's a running loop
-        # Run in a new thread with a new event loop to avoid conflicts
-        result = None
-        exception = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
         
-        def run_in_thread():
-            nonlocal result, exception
-            try:
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                result = new_loop.run_until_complete(_process_session_async(session_id, ai_job_id))
-                new_loop.close()
-            except Exception as e:
-                exception = e
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         
-        thread = threading.Thread(target=run_in_thread)
-        thread.start()
-        thread.join()
-        
-        if exception:
-            raise exception
-        return result
-    except RuntimeError:
-        # No running loop, safe to use asyncio.run()
-        asyncio.run(_process_session_async(session_id, ai_job_id))
+        result = loop.run_until_complete(_generate_summary_async(session_id, ai_job_id))
+        return result or {"session_id": session_id, "ai_job_id": ai_job_id}
+    except Exception as e:
+        logger.error(f"Error in generate_summary_task: {e}", exc_info=True)
+        return {"session_id": session_id, "ai_job_id": ai_job_id}
+    finally:
+        if loop and not loop.is_closed():
+            loop.close()
 
 
-async def _process_session_async(session_id: str, ai_job_id: str):
+async def _generate_summary_async(session_id: str, ai_job_id: str):
     """
-    Async implementation of AI session processing.
-    Credits are already debited - this just performs the AI work.
+    Async implementation of summary generation.
     """
+    # Create engine and sessionmaker within the current event loop
+    # This ensures the engine is tied to the correct event loop
+    engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        pool_pre_ping=True,
+    )
+    WorkerSessionLocal = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
     async with WorkerSessionLocal() as db:
         try:
             # Fetch AIJob
@@ -97,7 +125,7 @@ async def _process_session_async(session_id: str, ai_job_id: str):
             
             if not ai_job:
                 logger.error(f"AIJob {ai_job_id} not found")
-                return
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
             
             # Fetch session
             result = await db.execute(
@@ -107,47 +135,23 @@ async def _process_session_async(session_id: str, ai_job_id: str):
             
             if not session:
                 logger.error(f"Session {session_id} not found")
-                # Mark AIJob as failed
                 ai_job.status = AIJobStatus.FAILED
                 await db.commit()
-                return
-            
-            # Check if session should be processed (not NO_CREDITS or RAW_ONLY)
-            if session.status == SessionStatus.NO_CREDITS:
-                logger.warning(
-                    f"Session {session_id} has status NO_CREDITS - skipping AI processing. "
-                    f"Session was saved locally and can be processed later when credits are available."
-                )
-                # Mark AIJob as failed (no processing done)
-                ai_job.status = AIJobStatus.FAILED
-                await db.commit()
-                return
-            
-            if session.status == SessionStatus.RAW_ONLY:
-                logger.warning(
-                    f"Session {session_id} has status RAW_ONLY - skipping AI processing. "
-                    f"This is a legacy status, session was saved without AI processing."
-                )
-                # Mark AIJob as failed (no processing done)
-                ai_job.status = AIJobStatus.FAILED
-                await db.commit()
-                return
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
             
             # Update status to processing
             session.status = SessionStatus.PROCESSING
             await db.commit()
             
-            # Fetch all blocks
+            # Fetch all blocks - collect from multiple sources
             result = await db.execute(
                 select(SessionBlock).where(SessionBlock.session_id == session_id)
             )
-            blocks = result.scalars().all()
+            all_blocks = result.scalars().all()
             
-            logger.info(f"Processing session {session_id} with AI (user: {session.user_id}, job: {ai_job_id})")
+            logger.info(f"Processing session {session_id} with {len(all_blocks)} blocks")
             
-            # Get LLM provider (OpenAI, DeepSeek, etc.)
-            # Provider selection is controlled by AI_PROVIDER env var
-            # Worker doesn't need to know which provider is being used
+            # Get LLM provider
             try:
                 provider = get_llm_provider()
                 provider_name = get_provider_name()
@@ -155,15 +159,19 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 logger.error(f"Failed to get LLM provider: {e}")
                 raise
             
-            # Step 1: Generate embeddings for text content (chunked)
-            # Embeddings are generated independently from summaries
+            # Step 1: Generate embeddings for all text content
             embeddings_created = 0
             embeddings_failed = 0
             
-            # Extract all text content from blocks
+            # Collect text from all relevant block types
             all_text_parts = []
-            for block in blocks:
-                if block.text_content:
+            for block in all_blocks:
+                if block.text_content and block.block_type in [
+                    BlockType.TEXT,
+                    BlockType.TRANSCRIPTION_BACKEND,
+                    BlockType.IMAGE_DESCRIPTION,
+                    BlockType.VOICE,  # Legacy support
+                ]:
                     all_text_parts.append(block.text_content)
             
             if all_text_parts:
@@ -179,22 +187,19 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 # Generate embedding for each chunk
                 for chunk_idx, chunk in enumerate(text_chunks):
                     try:
-                        # Generate embedding using provider abstraction
                         embedding_vector = provider.embed(chunk)
                         
-                        # Store embedding using repository
                         await EmbeddingRepository.create_embedding(
                             db=db,
                             session_id=session_id,
                             provider=provider_name,
                             embedding_vector=embedding_vector,
                             text=chunk,
-                            block_id=None  # Chunks may span multiple blocks
+                            block_id=None
                         )
                         
                         embeddings_created += 1
                         
-                        # Log progress for large sessions
                         if (chunk_idx + 1) % 10 == 0:
                             logger.debug(
                                 f"Generated {chunk_idx + 1}/{len(text_chunks)} embeddings "
@@ -208,10 +213,8 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                             f"of session {session_id}: {e}",
                             exc_info=True
                         )
-                        # Continue with other chunks even if one fails
                         continue
                 
-                # Commit embeddings batch
                 await db.commit()
                 
                 logger.info(
@@ -221,15 +224,21 @@ async def _process_session_async(session_id: str, ai_job_id: str):
             else:
                 logger.warning(f"No text content found in session {session_id} for embedding generation")
             
-            # Step 2: Generate summary (independent from embeddings)
-            # Summary generation happens in parallel with embeddings
-            block_dicts = [
-                {
-                    "text_content": block.text_content,
-                    "block_type": block.block_type.value
-                }
-                for block in blocks
-            ]
+            # Step 2: Generate enriched summary from all blocks
+            # Prepare block dicts for summary generation
+            block_dicts = []
+            for block in all_blocks:
+                if block.text_content and block.block_type in [
+                    BlockType.TEXT,
+                    BlockType.TRANSCRIPTION_BACKEND,
+                    BlockType.IMAGE_DESCRIPTION,
+                    BlockType.VOICE,
+                ]:
+                    block_dicts.append({
+                        "text_content": block.text_content,
+                        "block_type": block.block_type.value,
+                        "source": _get_block_source(block.block_type)
+                    })
             
             # Step 2a: Generate enriched summary
             try:
@@ -249,12 +258,10 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                     logger.info(f"Generated title for session {session_id}: {suggested_title}")
             except Exception as e:
                 logger.error(f"Failed to generate title: {e}")
-                # Fallback: use first 50 chars of text content
                 fallback = all_text[:50] + "..." if len(all_text) > 50 else all_text
                 session.suggested_title = fallback if all_text else "Nota de voz"
             
             # Mark AIJob as completed
-            # Job succeeds even if some embeddings failed (partial success)
             ai_job.status = AIJobStatus.COMPLETED
             ai_job.completed_at = datetime.utcnow()
             
@@ -269,6 +276,8 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 f"{embeddings_created} embeddings created, "
                 f"{embeddings_failed} embeddings failed"
             )
+            
+            return {"session_id": session_id, "ai_job_id": ai_job_id}
             
         except Exception as e:
             logger.error(f"Error processing session {session_id}: {str(e)}", exc_info=True)
@@ -292,4 +301,15 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 await db_retry.commit()
             
             raise
+
+
+def _get_block_source(block_type: BlockType) -> str:
+    """Get human-readable source name for block type."""
+    source_map = {
+        BlockType.TEXT: "Frontend (speech-to-text)",
+        BlockType.TRANSCRIPTION_BACKEND: "Backend (Groq Whisper)",
+        BlockType.IMAGE_DESCRIPTION: "Backend (DeepSeek Vision)",
+        BlockType.VOICE: "Frontend (legacy)",
+    }
+    return source_map.get(block_type, "Unknown")
 

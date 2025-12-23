@@ -13,9 +13,12 @@ from app.models.base import Base, generate_uuid
 
 class BlockType(str, enum.Enum):
     """Block type discriminator."""
-    VOICE = "voice"
-    IMAGE = "image"
-    MARKER = "marker"
+    TEXT = "text"                           # Transcription from frontend (speech-to-text local)
+    VOICE = "voice"                         # Legacy: voice block
+    IMAGE = "image"                         # Reference to image
+    MARKER = "marker"                       # Temporal marker
+    TRANSCRIPTION_BACKEND = "transcription_backend"  # Audio transcribed by backend (Groq Whisper)
+    IMAGE_DESCRIPTION = "image_description"          # Image description by AI (DeepSeek Vision)
 
 
 class SessionBlock(Base):

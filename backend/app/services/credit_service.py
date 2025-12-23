@@ -68,7 +68,8 @@ class CreditService:
             .values(credits=User.credits - amount)
         )
         
-        await db.commit()
+        # Note: Caller is responsible for committing the transaction
+        # This allows batching multiple operations in a single transaction
         
         # Check if update affected any rows
         return result.rowcount > 0
@@ -96,7 +97,7 @@ class CreditService:
             .values(credits=User.credits + amount)
         )
         
-        await db.commit()
+        # Note: Caller is responsible for committing the transaction
     
     @staticmethod
     async def get_balance(db: AsyncSession, user_id: str) -> int:

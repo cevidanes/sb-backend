@@ -52,6 +52,22 @@ class LLMProvider(ABC):
         pass
     
     @abstractmethod
+    def generate_title(self, text: str) -> str:
+        """
+        Generate a concise title for the content.
+        
+        Args:
+            text: Input text to generate title for
+            
+        Returns:
+            Short, descriptive title (max 60 chars)
+            
+        Raises:
+            Exception: If title generation fails
+        """
+        pass
+    
+    @abstractmethod
     def is_configured(self) -> bool:
         """
         Check if provider is properly configured (API key present, etc.).

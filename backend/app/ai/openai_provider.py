@@ -76,13 +76,19 @@ class OpenAIProvider(LLMProvider):
     
     def summarize(self, blocks: List[Dict[str, Any]]) -> str:
         """
-        Generate summary using OpenAI chat completion.
+        Generate enriched summary using OpenAI chat completion.
+        
+        Returns a structured summary in markdown format with:
+        - Key insights
+        - Main topics
+        - Action items (if any)
+        - Important details
         
         Args:
             blocks: List of block dictionaries with text_content
             
         Returns:
-            Summary string
+            Enriched summary string in markdown format
             
         Raises:
             ValueError: If API key not configured
@@ -111,28 +117,117 @@ class OpenAIProvider(LLMProvider):
             logger.warning(f"Text truncated to {max_chars} characters for summary")
         
         try:
-            # Call OpenAI chat completion API
+            # Call OpenAI chat completion API with enriched summary prompt
             response = self.client.chat.completions.create(
                 model=self.chat_model,
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a helpful assistant that creates concise summaries of text content. Summarize the key points and main ideas."
+                        "content": """Você é um assistente especializado em criar resumos enriquecidos e estruturados de notas de voz e transcrições.
+
+Seu objetivo é transformar texto bruto em um resumo útil e organizado.
+
+Regras:
+1. Responda SEMPRE em português brasileiro
+2. Use markdown para formatação
+3. Seja conciso mas informativo
+4. Extraia insights e pontos-chave
+5. Identifique ações ou tarefas mencionadas
+6. Destaque nomes, datas e valores importantes"""
                     },
                     {
                         "role": "user",
-                        "content": f"Please summarize the following content:\n\n{combined_text}"
+                        "content": f"""Crie um resumo enriquecido do seguinte conteúdo:
+
+---
+{combined_text}
+---
+
+Estruture o resumo assim:
+
+## 📌 Resumo
+[2-3 frases resumindo o conteúdo principal]
+
+## 💡 Pontos-Chave
+- [ponto 1]
+- [ponto 2]
+- [etc...]
+
+## ✅ Ações/Tarefas
+[Liste tarefas ou ações mencionadas, ou escreva "Nenhuma ação identificada"]
+
+## 📝 Detalhes Importantes
+[Nomes, datas, valores, ou informações específicas mencionadas]"""
                     }
                 ],
-                temperature=0.3,  # Lower temperature for more consistent summaries
-                max_tokens=500  # Limit response length to control costs
+                temperature=0.3,
+                max_tokens=800
             )
             
             summary = response.choices[0].message.content
-            logger.info(f"Generated OpenAI summary (length: {len(summary)})")
+            logger.info(f"Generated OpenAI enriched summary (length: {len(summary)})")
             return summary
             
         except Exception as e:
             logger.error(f"OpenAI chat completion API error: {e}")
             raise Exception(f"Failed to generate OpenAI summary: {str(e)}")
+    
+    def generate_title(self, text: str) -> str:
+        """
+        Generate a concise, descriptive title for the content.
+        
+        Args:
+            text: The content to generate a title for
+            
+        Returns:
+            A short, descriptive title (max 60 chars)
+            
+        Raises:
+            ValueError: If API key not configured
+            Exception: If API call fails
+        """
+        if not self.is_configured() or not self.client:
+            raise ValueError("OpenAI API key not configured")
+        
+        # Truncate input if too long
+        max_chars = 2000
+        truncated_text = text[:max_chars] if len(text) > max_chars else text
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You generate short, descriptive titles for voice notes.
+
+Rules:
+1. Maximum 60 characters
+2. Portuguese (Brazilian)
+3. No quotes or final punctuation
+4. Capture the essence of the content
+5. Be specific, not generic"""
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Create a short title for:\n\n{truncated_text}"
+                    }
+                ],
+                temperature=0.5,
+                max_tokens=30
+            )
+            
+            title = response.choices[0].message.content.strip()
+            # Remove quotes if present
+            title = title.strip('"\'')
+            # Truncate to 60 chars
+            if len(title) > 60:
+                title = title[:57] + "..."
+            
+            logger.info(f"Generated OpenAI title: {title}")
+            return title
+            
+        except Exception as e:
+            logger.error(f"OpenAI title generation error: {e}")
+            raise Exception(f"Failed to generate title: {str(e)}")
 

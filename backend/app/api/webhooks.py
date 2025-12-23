@@ -119,6 +119,7 @@ async def stripe_webhook(
         # Credit user account
         try:
             await CreditService.credit(db, user_id, credits_amount)
+            await db.commit()
             logger.info(
                 f"Credited {credits_amount} credits to user {user_id} "
                 f"(payment_intent: {payment_intent_id})"

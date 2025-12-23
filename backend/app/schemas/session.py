@@ -22,6 +22,8 @@ class SessionResponse(BaseModel):
     updated_at: datetime
     finalized_at: Optional[datetime] = None
     processed_at: Optional[datetime] = None
+    ai_summary: Optional[str] = None
+    suggested_title: Optional[str] = None
     
     class Config:
         from_attributes = True

@@ -10,7 +10,12 @@ celery_app = Celery(
     "secondbrain",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.process_session"]
+    include=[
+        "app.tasks.process_session",
+        "app.tasks.transcribe_audio",
+        "app.tasks.process_images",
+        "app.tasks.generate_summary"
+    ]
 )
 
 # Celery configuration

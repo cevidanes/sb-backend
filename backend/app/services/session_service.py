@@ -2,18 +2,19 @@
 Session service for business logic around sessions.
 Handles session creation, block addition, finalization, and deletion.
 """
+import asyncio
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, text
 from datetime import datetime
-from typing import Optional
-import json
-import os
+from typing import Optional, List
 
 from app.models.session import Session, SessionStatus
 from app.models.session_block import SessionBlock, BlockType
 from app.models.ai_job import AIJob
 from app.models.embedding import Embedding
 from app.models.media_file import MediaFile
+from app.storage.r2_client import get_r2_client
 
 # #region agent log
 DEBUG_LOG_PATH = "/Users/cevidanes/projects/SecondBrain/.cursor/debug.log"
@@ -240,8 +241,7 @@ class SessionService:
             session.status = SessionStatus.NO_CREDITS
         
         session.finalized_at = datetime.utcnow()
-        await db.commit()
-        await db.refresh(session)
+        # Note: Caller is responsible for committing the transaction
         return session
     
     @staticmethod
@@ -256,6 +256,7 @@ class SessionService:
         Deletes:
         - AIJob records associated with the session
         - Embedding records associated with the session
+        - Physical media files from R2 storage (if configured)
         - MediaFile records associated with the session
         - SessionBlock records (via cascade)
         - Session record itself
@@ -277,7 +278,26 @@ class SessionService:
             delete(Embedding).where(Embedding.session_id == session_id)
         )
         
-        # Delete related MediaFile records
+        # Get MediaFile records before deleting them (to delete physical files from R2)
+        media_files_result = await db.execute(
+            select(MediaFile).where(MediaFile.session_id == session_id)
+        )
+        media_files = media_files_result.scalars().all()
+        
+        # Collect object keys for R2 deletion
+        object_keys: List[str] = [
+            mf.object_key for mf in media_files if mf.object_key
+        ]
+        
+        # Delete physical files from R2 storage asynchronously using batch delete
+        # Run boto3 sync operations in a thread pool to avoid blocking the event loop
+        if object_keys:
+            r2_client = get_r2_client()
+            if r2_client.is_configured:
+                # Use batch delete for efficiency (up to 1000 objects per call)
+                await asyncio.to_thread(r2_client.delete_objects_batch, object_keys)
+        
+        # Delete related MediaFile records from database
         await db.execute(
             delete(MediaFile).where(MediaFile.session_id == session_id)
         )

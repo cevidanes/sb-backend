@@ -12,7 +12,10 @@ from app.schemas.session import SessionCreate, SessionResponse, SessionFinalizeR
 from app.schemas.block import BlockCreate, BlockResponse
 from app.services.session_service import SessionService
 from app.services.credit_service import CreditService
-from app.tasks.process_session import process_session_task
+from celery import chain
+from app.tasks.transcribe_audio import transcribe_audio_task
+from app.tasks.process_images import process_images_task
+from app.tasks.generate_summary import generate_summary_task
 from app.models.ai_job import AIJob, AIJobStatus
 
 router = APIRouter()
@@ -108,41 +111,56 @@ async def finalize_session(
         has_credits = await CreditService.has_credits(db, current_user.id, amount=1)
         
         if has_credits:
-            # Atomically debit 1 credit
+            # Atomically debit 1 credit (no commit yet - batched transaction)
             debit_success = await CreditService.debit(db, current_user.id, amount=1)
             
             if debit_success:
-                # Create AIJob record
-                ai_job = AIJob(
-                    user_id=current_user.id,
-                    session_id=session_id,
-                    job_type="session_processing",
-                    credits_used=1,
-                    status=AIJobStatus.PENDING
-                )
-                db.add(ai_job)
-                await db.commit()
-                await db.refresh(ai_job)
-                
-                # Finalize session with AI processing
-                session = await SessionService.finalize_session(
-                    db, session_id, current_user.id, has_credits=True
-                )
-                
-                # Enqueue Celery task for async AI processing
-                process_session_task.delay(session_id, ai_job.id)
-                
-                return SessionFinalizeResponse(
-                    message="Session finalized. AI processing started.",
-                    session_id=session_id,
-                    status=session.status
-                )
+                ai_job = None
+                try:
+                    # Create AIJob record
+                    ai_job = AIJob(
+                        user_id=current_user.id,
+                        session_id=session_id,
+                        job_type="session_processing",
+                        credits_used=1,
+                        status=AIJobStatus.PENDING
+                    )
+                    db.add(ai_job)
+                    
+                    # Finalize session with AI processing (no commit yet)
+                    session = await SessionService.finalize_session(
+                        db, session_id, current_user.id, has_credits=True
+                    )
+                    
+                    # Single commit for all operations (atomic transaction)
+                    await db.commit()
+                    await db.refresh(ai_job)
+                    
+                    # Enqueue Celery pipeline for async AI processing
+                    # Pipeline: transcribe_audio -> process_images -> generate_summary
+                    pipeline = chain(
+                        transcribe_audio_task.s(session_id, str(ai_job.id)),
+                        process_images_task.s(),
+                        generate_summary_task.s()
+                    )
+                    pipeline.delay()
+                    
+                    return SessionFinalizeResponse(
+                        message="Session finalized. AI processing started.",
+                        session_id=session_id,
+                        status=session.status
+                    )
+                except Exception as e:
+                    # Rollback all changes if any operation fails
+                    await db.rollback()
+                    raise
             else:
                 # Debit failed (race condition - credits depleted)
                 # Finalize without AI - session saved locally
                 session = await SessionService.finalize_session(
                     db, session_id, current_user.id, has_credits=False
                 )
+                await db.commit()
                 return SessionFinalizeResponse(
                     message="Session finalized without AI processing (insufficient credits). Session saved locally.",
                     session_id=session_id,
@@ -153,6 +171,8 @@ async def finalize_session(
             session = await SessionService.finalize_session(
                 db, session_id, current_user.id, has_credits=False
             )
+            await db.commit()
+            
             return SessionFinalizeResponse(
                 message="Session finalized without AI processing (no credits available). Session saved locally.",
                 session_id=session_id,
@@ -259,7 +279,8 @@ async def delete_session(
     - All blocks associated with the session
     - All AI jobs associated with the session
     - All embeddings associated with the session
-    - All media files associated with the session
+    - Physical media files from R2 storage (if configured)
+    - All media file records associated with the session
     
     Returns 204 No Content on success.
     Returns 400 if session not found or doesn't belong to user.

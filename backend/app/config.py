@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     deepseek_api_key: Optional[str] = None
     deepseek_embedding_model: str = "deepseek-embedding"  # Default embedding model
     
+    # Groq (optional - only used in workers for audio transcription)
+    groq_api_key: Optional[str] = None
+    
     # Environment
     environment: str = "dev"
     

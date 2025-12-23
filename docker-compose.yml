@@ -44,7 +44,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      GROQ_API_KEY: ${GROQ_API_KEY:-${GROQ_API_KEY:-}}
+      AI_PROVIDER: ${AI_PROVIDER:-deepseek}
       ENVIRONMENT: ${ENVIRONMENT:-dev}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-projectsecondbrain}
       FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-./firebase-credentials.json}
@@ -55,6 +56,7 @@ services:
       R2_SECRET_KEY: ${R2_SECRET_KEY:-}
       R2_REGION: ${R2_REGION:-auto}
       R2_PRESIGN_EXPIRATION: ${R2_PRESIGN_EXPIRATION:-600}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,13 +72,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sb-worker
-    command: celery -A app.workers.celery_app worker --loglevel=info
+    command: celery -A app.workers.celery_app worker --loglevel=debug
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-secondbrain}
       REDIS_URL: redis://redis:6379/0
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      GROQ_API_KEY: ${GROQ_API_KEY:-${GROQ_API_KEY:-}}
+      AI_PROVIDER: ${AI_PROVIDER:-deepseek}
       ENVIRONMENT: ${ENVIRONMENT:-dev}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-projectsecondbrain}
       FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-./firebase-credentials.json}

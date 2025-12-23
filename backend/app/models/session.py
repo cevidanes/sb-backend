@@ -2,7 +2,7 @@
 Session model tracking session lifecycle.
 Sessions contain multiple blocks and go through status transitions.
 """
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum, Text
 from sqlalchemy.dialects.postgresql import UUID, ENUM as PostgresEnum
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -93,6 +93,10 @@ class Session(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     finalized_at = Column(DateTime, nullable=True)
     processed_at = Column(DateTime, nullable=True)
+    
+    # AI processing results
+    ai_summary = Column(Text, nullable=True)  # AI-generated summary of the session
+    suggested_title = Column(String(255), nullable=True)  # AI-suggested title
     
     # Relationships
     blocks = relationship("SessionBlock", back_populates="session", cascade="all, delete-orphan")

@@ -1,0 +1,254 @@
+"""
+Celery task for processing images.
+Downloads images from R2, analyzes with DeepSeek Vision, and saves descriptions as SessionBlocks.
+"""
+import asyncio
+import threading
+import tempfile
+import os
+import logging
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy import select
+
+from app.config import settings
+from app.models.session import Session
+from app.models.session_block import SessionBlock, BlockType
+from app.models.media_file import MediaFile, MediaType, MediaStatus
+from app.storage.r2_client import get_r2_client
+from app.workers.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
+
+# Create worker engine and sessionmaker (separate to avoid event loop conflicts)
+worker_engine = None
+WorkerSessionLocal = None
+
+def get_worker_session_local():
+    """Get or create worker session local, creating a new engine if needed."""
+    global worker_engine, WorkerSessionLocal
+    if worker_engine is None:
+        worker_engine = create_async_engine(
+            settings.database_url,
+            echo=False,
+            pool_pre_ping=True,
+        )
+    if WorkerSessionLocal is None:
+        WorkerSessionLocal = async_sessionmaker(
+            worker_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+    return WorkerSessionLocal
+
+
+@celery_app.task(name="process_images", bind=True, max_retries=3)
+def process_images_task(self, previous_result: dict):
+    """
+    Process images for a session using DeepSeek Vision.
+    
+    Flow:
+    1. Extract session_id from previous worker result
+    2. Fetch image MediaFiles
+    3. Download images from R2
+    4. Analyze each image with DeepSeek Vision
+    5. Save descriptions as SessionBlocks (type=image_description)
+    6. Return result for next worker in pipeline
+    
+    Args:
+        previous_result: Dict from previous worker with session_id and ai_job_id
+        
+    Returns:
+        Dict with session_id and ai_job_id for next worker
+    """
+    import asyncio
+    import threading
+    
+    session_id = previous_result.get("session_id")
+    ai_job_id = previous_result.get("ai_job_id")
+    
+    if not session_id:
+        logger.error("No session_id in previous_result")
+        return previous_result
+    
+    # Run async code in sync context
+    # Celery workers run in separate processes, so we can safely use asyncio.run
+    # But we need to create a fresh event loop to avoid conflicts
+    import asyncio
+    loop = None
+    try:
+        # Try to get existing loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        
+        if loop is None:
+            # No running loop, safe to use asyncio.run
+            result = asyncio.run(_process_images_async(session_id, ai_job_id))
+            return result or {"session_id": session_id, "ai_job_id": ai_job_id}
+        else:
+            # Running loop exists, create new one in thread
+            import threading
+            result = None
+            exception = None
+            
+            def run_in_thread():
+                nonlocal result, exception
+                try:
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        result = new_loop.run_until_complete(_process_images_async(session_id, ai_job_id))
+                    finally:
+                        new_loop.close()
+                except Exception as e:
+                    exception = e
+            
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join()
+            
+            if exception:
+                logger.error(f"Error in process_images_task: {exception}", exc_info=True)
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
+            return result or {"session_id": session_id, "ai_job_id": ai_job_id}
+    except Exception as e:
+        logger.error(f"Error in process_images_task: {e}", exc_info=True)
+        return {"session_id": session_id, "ai_job_id": ai_job_id}
+
+
+async def _process_images_async(session_id: str, ai_job_id: str):
+    """
+    Async implementation of image processing.
+    """
+    # Get session local (creates new engine if needed)
+    WorkerSessionLocal = get_worker_session_local()
+    async with WorkerSessionLocal() as db:
+        try:
+            # Fetch session
+            result = await db.execute(
+                select(Session).where(Session.id == session_id)
+            )
+            session = result.scalar_one_or_none()
+            
+            if not session:
+                logger.error(f"Session {session_id} not found")
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
+            
+            # Fetch image MediaFiles for this session
+            result = await db.execute(
+                select(MediaFile).where(
+                    MediaFile.session_id == session_id,
+                    MediaFile.type == MediaType.IMAGE,
+                    MediaFile.status == MediaStatus.UPLOADED
+                )
+            )
+            image_files = result.scalars().all()
+            
+            if not image_files:
+                logger.info(f"No image files found for session {session_id}")
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
+            
+            logger.info(f"Found {len(image_files)} image file(s) for session {session_id}")
+            
+            # Initialize Vision provider (Groq primary, OpenAI fallback)
+            from app.ai.vision_provider import VisionProvider
+            vision_provider = VisionProvider()
+            if not vision_provider.is_configured():
+                logger.warning("Vision API not configured (Groq or OpenAI), skipping image processing")
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
+            
+            # Initialize R2 client
+            r2_client = get_r2_client()
+            if not r2_client.is_configured:
+                logger.error("R2 client not configured, cannot download image files")
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
+            
+            descriptions_created = 0
+            descriptions_failed = 0
+            
+            # Process each image file
+            for image_file in image_files:
+                temp_file_path = None
+                try:
+                    # Download image file from R2 to temporary file
+                    temp_file_path = os.path.join(tempfile.gettempdir(), f"image_{image_file.id}.tmp")
+                    
+                    logger.info(f"Downloading image file {image_file.object_key} from R2...")
+                    if not r2_client.download_file(image_file.object_key, temp_file_path):
+                        raise Exception(f"Failed to download image file {image_file.object_key}")
+                    
+                    # Try to use presigned URL first (more efficient - avoids downloading),
+                    # fallback to local file if URL generation fails
+                    image_url = r2_client.get_presigned_read_url(image_file.object_key)
+                    logger.info(f"Analyzing image file {image_file.object_key}...")
+                    
+                    if image_url:
+                        # Use presigned URL (preferred for Groq Vision - avoids downloading the file)
+                        try:
+                            image_description = vision_provider.describe_image_from_url(
+                                image_url,
+                                language="pt"
+                            )
+                        except Exception as url_error:
+                            logger.warning(f"Failed to analyze image via URL, trying local file: {url_error}")
+                            # Fallback to local file
+                            image_description = vision_provider.describe_image(
+                                temp_file_path,
+                                language="pt"
+                            )
+                    else:
+                        # Use local file with base64 encoding
+                        image_description = vision_provider.describe_image(
+                            temp_file_path,
+                            language="pt"
+                        )
+                    
+                    # Create SessionBlock for image description
+                    description_block = SessionBlock(
+                        session_id=session_id,
+                        block_type=BlockType.IMAGE_DESCRIPTION,
+                        text_content=image_description,
+                        media_url=image_file.object_key,  # Reference to original image
+                        _metadata=f'{{"media_file_id": "{image_file.id}", "source": "groq_vision"}}'
+                    )
+                    
+                    db.add(description_block)
+                    descriptions_created += 1
+                    
+                    logger.info(
+                        f"Image description created for image {image_file.id}: "
+                        f"{len(image_description)} chars"
+                    )
+                    
+                except Exception as e:
+                    descriptions_failed += 1
+                    logger.error(
+                        f"Failed to process image file {image_file.id}: {e}",
+                        exc_info=True
+                    )
+                    # Continue with other files
+                    continue
+                finally:
+                    # Clean up temporary file
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        try:
+                            os.remove(temp_file_path)
+                        except Exception as e:
+                            logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+            
+            # Commit all descriptions
+            await db.commit()
+            
+            logger.info(
+                f"Image processing complete for session {session_id}: "
+                f"{descriptions_created} created, {descriptions_failed} failed"
+            )
+            
+            return {"session_id": session_id, "ai_job_id": ai_job_id}
+            
+        except Exception as e:
+            logger.error(f"Error processing images for session {session_id}: {str(e)}", exc_info=True)
+            # Don't fail the entire pipeline - return result anyway
+            return {"session_id": session_id, "ai_job_id": ai_job_id}
+
