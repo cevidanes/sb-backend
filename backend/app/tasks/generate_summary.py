@@ -17,6 +17,7 @@ from app.ai.factory import get_llm_provider, get_provider_name
 from app.utils.text_chunker import chunk_text
 from app.repositories.embedding_repository import EmbeddingRepository
 from app.workers.celery_app import celery_app
+from app.services.fcm_service import FCMService
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +277,20 @@ async def _generate_summary_async(session_id: str, ai_job_id: str):
                 f"{embeddings_created} embeddings created, "
                 f"{embeddings_failed} embeddings failed"
             )
+            
+            # Send FCM notification to user
+            try:
+                await FCMService.send_session_ready_notification(
+                    db=db,
+                    user_id=session.user_id,
+                    session_id=session_id,
+                    session_title=session.suggested_title
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to send FCM notification for session {session_id}: {e}",
+                    exc_info=True
+                )
             
             return {"session_id": session_id, "ai_job_id": ai_job_id}
             

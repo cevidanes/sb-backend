@@ -2,7 +2,7 @@
 User profile endpoints.
 Returns information about the authenticated user.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -34,5 +34,43 @@ async def get_credits(
     return CreditsResponse(
         credits=balance,
         user_id=current_user.id
+    )
+
+
+class FCMTokenRequest(BaseModel):
+    """Request schema for FCM token endpoint."""
+    token: str
+
+
+class FCMTokenResponse(BaseModel):
+    """Response schema for FCM token endpoint."""
+    success: bool
+    message: str
+
+
+@router.post("/fcm-token", response_model=FCMTokenResponse)
+async def update_fcm_token(
+    request: FCMTokenRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update FCM token for authenticated user.
+    Called when FCM service initializes or token changes.
+    Requires valid Firebase JWT token.
+    """
+    if not request.token or len(request.token.strip()) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token cannot be empty"
+        )
+    
+    current_user.fcm_token = request.token.strip()
+    await db.commit()
+    await db.refresh(current_user)
+    
+    return FCMTokenResponse(
+        success=True,
+        message="FCM token updated successfully"
     )
 

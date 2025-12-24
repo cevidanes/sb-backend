@@ -12,6 +12,7 @@ from app.schemas.session import SessionCreate, SessionResponse, SessionFinalizeR
 from app.schemas.block import BlockCreate, BlockResponse
 from app.services.session_service import SessionService
 from app.services.credit_service import CreditService
+from app.services.fcm_service import FCMService
 from celery import chain
 from app.tasks.transcribe_audio import transcribe_audio_task
 from app.tasks.process_images import process_images_task
@@ -135,6 +136,22 @@ async def finalize_session(
                     # Single commit for all operations (atomic transaction)
                     await db.commit()
                     await db.refresh(ai_job)
+                    
+                    # Check if user has low credits (<= 5) and send notification
+                    try:
+                        current_balance = await CreditService.get_balance(db, current_user.id)
+                        if current_balance <= 5:
+                            await FCMService.send_low_credits_notification(
+                                db=db,
+                                user_id=current_user.id,
+                                credits_balance=current_balance
+                            )
+                    except Exception as e:
+                        # Don't fail the request if notification fails
+                        logger.error(
+                            f"Failed to send low credits notification to user {current_user.id}: {e}",
+                            exc_info=True
+                        )
                     
                     # Enqueue Celery pipeline for async AI processing
                     # Pipeline: transcribe_audio -> process_images -> generate_summary

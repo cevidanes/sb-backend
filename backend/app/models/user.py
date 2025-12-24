@@ -18,6 +18,7 @@ class User(Base):
     firebase_uid = Column(String(128), nullable=False, unique=True, index=True)  # Firebase user ID
     email = Column(String(255), nullable=True)  # Email from Firebase token
     credits = Column(Integer, nullable=False, default=0)  # AI credits balance
+    fcm_token = Column(String(512), nullable=True)  # Firebase Cloud Messaging token
     
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     
