@@ -4,3 +4,4 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(2) DEFAULT
 -- Add index for faster lookups (optional)
 CREATE INDEX IF NOT EXISTS idx_user_preferred_language ON users(preferred_language) WHERE preferred_language IS NOT NULL;
 
+
