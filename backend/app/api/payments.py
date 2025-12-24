@@ -29,6 +29,8 @@ class CreditPackageResponse(BaseModel):
     description: Optional[str]
     popular: bool
     price_per_credit: float
+    price_id: Optional[str] = None
+    product_id: Optional[str] = None
 
 
 class PackagesListResponse(BaseModel):
@@ -48,6 +50,17 @@ class CheckoutResponse(BaseModel):
     checkout_url: str
     session_id: str
     expires_at: int
+
+
+class CreatePaymentIntentRequest(BaseModel):
+    """Request schema for creating a payment intent."""
+    package_id: str = Field(..., description="ID of the credit package to purchase")
+
+
+class PaymentIntentResponse(BaseModel):
+    """Response schema for payment intent."""
+    client_secret: str
+    payment_intent_id: str
 
 
 class PaymentHistoryItem(BaseModel):
@@ -110,6 +123,56 @@ async def create_checkout(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
+        )
+
+
+@router.post("/payment-intent", response_model=PaymentIntentResponse)
+async def create_payment_intent(
+    request: CreatePaymentIntentRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create a Stripe Payment Intent for credit purchase using Payment Sheet.
+    
+    Requires authentication. Returns client_secret and payment_intent_id
+    for use with Stripe Payment Sheet in mobile apps.
+    
+    This endpoint is preferred for mobile apps as it provides native
+    payment UI that complies with App Store and Play Store guidelines.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(
+            f"Creating payment intent for user {current_user.id}, "
+            f"package {request.package_id}"
+        )
+        result = await stripe_service.create_payment_intent(
+            db=db,
+            user_id=current_user.id,
+            package_id=request.package_id,
+        )
+        logger.info(f"Payment intent created successfully: {result.get('payment_intent_id')}")
+        return PaymentIntentResponse(**result)
+    except ValueError as e:
+        logger.error(f"Validation error creating payment intent: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        error_message = str(e)
+        logger.error(f"Unexpected error creating payment intent: {error_message}")
+        logger.error(f"Traceback: {error_trace}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {error_message}"
         )
 
 

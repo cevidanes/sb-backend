@@ -70,47 +70,144 @@ class StripeService:
         """Initialize Stripe with API key."""
         if settings.stripe_secret_key:
             stripe.api_key = settings.stripe_secret_key
+            logger.info("Stripe initialized with secret key")
         else:
             logger.warning("Stripe secret key not configured")
     
     @staticmethod
     def get_packages() -> List[Dict[str, Any]]:
         """
-        Get list of available credit packages.
+        Get list of available credit packages from Stripe.
+        
+        Fetches active products and prices from Stripe and maps them
+        to credit packages based on metadata.
         
         Returns:
             List of package dictionaries with pricing info
         """
-        return [
-            {
-                "id": pkg.id,
-                "name": pkg.name,
-                "credits": pkg.credits,
-                "price_cents": pkg.price_cents,
-                "price_formatted": f"${pkg.price_cents / 100:.2f}",
-                "currency": pkg.currency,
-                "description": pkg.description,
-                "popular": pkg.popular,
-                "price_per_credit": round(pkg.price_cents / pkg.credits, 2),
-            }
-            for pkg in CREDIT_PACKAGES
-        ]
+        if not settings.stripe_secret_key:
+            logger.warning("Stripe not configured, returning empty packages list")
+            return []
+        
+        try:
+            # Ensure Stripe API key is set
+            if not stripe.api_key or stripe.api_key != settings.stripe_secret_key:
+                stripe.api_key = settings.stripe_secret_key
+            
+            # Fetch active products with metadata
+            products = stripe.Product.list(active=True, limit=100)
+            
+            packages = []
+            for product in products.data:
+                # Check if product has credit package metadata
+                metadata = product.metadata or {}
+                if 'credits' not in metadata:
+                    continue
+                
+                # Get the default price for this product
+                default_price_id = product.default_price
+                if not default_price_id:
+                    # Try to get the first active price
+                    prices = stripe.Price.list(product=product.id, active=True, limit=1)
+                    if not prices.data:
+                        continue
+                    default_price_id = prices.data[0].id
+                
+                # Get price details
+                price = stripe.Price.retrieve(default_price_id)
+                
+                credits = int(metadata.get('credits', 0))
+                if credits == 0:
+                    continue
+                
+                price_cents = price.unit_amount or 0
+                currency = price.currency or 'usd'
+                
+                packages.append({
+                    "id": product.id,
+                    "name": product.name,
+                    "credits": credits,
+                    "price_cents": price_cents,
+                    "price_formatted": f"${price_cents / 100:.2f}",
+                    "currency": currency,
+                    "description": product.description or metadata.get('description', ''),
+                    "popular": metadata.get('popular', 'false').lower() == 'true',
+                    "price_per_credit": round(price_cents / credits, 2) if credits > 0 else 0,
+                    "price_id": price.id,
+                    "product_id": product.id,
+                })
+            
+            # Sort by price_cents
+            packages.sort(key=lambda x: x['price_cents'])
+            
+            logger.info(f"Retrieved {len(packages)} packages from Stripe")
+            return packages
+            
+        except stripe.error.StripeError as e:
+            logger.error(f"Error fetching packages from Stripe: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error fetching packages: {e}")
+            return []
     
     @staticmethod
-    def get_package(package_id: str) -> Optional[CreditPackage]:
+    def get_package(package_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get a specific credit package by ID.
+        Get a specific credit package by ID from Stripe.
         
         Args:
-            package_id: Package identifier
+            package_id: Stripe Product ID
             
         Returns:
-            CreditPackage or None if not found
+            Package dictionary or None if not found
         """
-        for pkg in CREDIT_PACKAGES:
-            if pkg.id == package_id:
-                return pkg
-        return None
+        if not settings.stripe_secret_key:
+            return None
+        
+        try:
+            # Ensure Stripe API key is set
+            if not stripe.api_key or stripe.api_key != settings.stripe_secret_key:
+                stripe.api_key = settings.stripe_secret_key
+            
+            # Retrieve product from Stripe
+            product = stripe.Product.retrieve(package_id)
+            
+            # Get price
+            default_price_id = product.default_price
+            if not default_price_id:
+                prices = stripe.Price.list(product=product.id, active=True, limit=1)
+                if not prices.data:
+                    return None
+                default_price_id = prices.data[0].id
+            
+            price = stripe.Price.retrieve(default_price_id)
+            
+            metadata = product.metadata or {}
+            credits = int(metadata.get('credits', 0))
+            if credits == 0:
+                return None
+            
+            price_cents = price.unit_amount or 0
+            currency = price.currency or 'usd'
+            
+            return {
+                "id": product.id,
+                "name": product.name,
+                "credits": credits,
+                "price_cents": price_cents,
+                "currency": currency,
+                "description": product.description or metadata.get('description', ''),
+                "popular": metadata.get('popular', 'false').lower() == 'true',
+                "price_id": price.id,
+                "product_id": product.id,
+            }
+            
+        except stripe.error.StripeError as e:
+            logger.error(f"Error fetching package {package_id} from Stripe: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error fetching package: {e}")
+            return None
     
     @staticmethod
     async def create_checkout_session(
@@ -139,10 +236,14 @@ class StripeService:
         if not settings.stripe_secret_key:
             raise ValueError("Stripe is not configured")
         
-        # Get the package
+        # Get the package from Stripe
         package = StripeService.get_package(package_id)
         if not package:
             raise ValueError(f"Package '{package_id}' not found")
+        
+        price_id = package.get('price_id')
+        if not price_id:
+            raise ValueError(f"Package '{package_id}' has no price_id")
         
         # Verify user exists
         result = await db.execute(
@@ -153,19 +254,12 @@ class StripeService:
             raise ValueError("User not found")
         
         try:
-            # Create Stripe Checkout Session
+            # Create Stripe Checkout Session using price_id
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=["card"],
                 line_items=[
                     {
-                        "price_data": {
-                            "currency": package.currency,
-                            "unit_amount": package.price_cents,
-                            "product_data": {
-                                "name": f"SecondBrain {package.name}",
-                                "description": f"{package.credits} AI Credits - {package.description or ''}",
-                            },
-                        },
+                        "price": price_id,
                         "quantity": 1,
                     }
                 ],
@@ -173,9 +267,10 @@ class StripeService:
                 success_url=success_url,
                 cancel_url=cancel_url,
                 metadata={
-                    "user_id": user_id,
-                    "credits": str(package.credits),
+                    "user_id": str(user_id),
+                    "credits": str(package['credits']),
                     "package_id": package_id,
+                    "product_id": package.get('product_id', package_id),
                 },
                 # Customer email for receipt
                 customer_email=user.email if user.email else None,
@@ -183,11 +278,11 @@ class StripeService:
             
             # Create pending payment record
             payment = Payment(
-                user_id=user_id,
+                user_id=str(user_id),
                 stripe_checkout_session_id=checkout_session.id,
-                amount_cents=package.price_cents,
-                currency=package.currency,
-                credits_amount=package.credits,
+                amount_cents=package['price_cents'],
+                currency=package['currency'],
+                credits_amount=package['credits'],
                 status=PaymentStatus.PENDING,
                 package_id=package_id,
             )
@@ -196,7 +291,7 @@ class StripeService:
             
             logger.info(
                 f"Created checkout session {checkout_session.id} for user {user_id}, "
-                f"package {package_id} ({package.credits} credits)"
+                f"package {package_id} ({package['credits']} credits)"
             )
             
             return {
@@ -208,6 +303,137 @@ class StripeService:
         except stripe.error.StripeError as e:
             logger.error(f"Stripe error creating checkout session: {e}")
             raise ValueError(f"Payment service error: {str(e)}")
+    
+    @staticmethod
+    async def create_payment_intent(
+        db: AsyncSession,
+        user_id: str,
+        package_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Create a Stripe Payment Intent for credit purchase.
+        
+        This method is used for mobile apps with Payment Sheet integration.
+        It creates a Payment Intent that can be used with Stripe Payment Sheet
+        for native in-app payments.
+        
+        Args:
+            db: Database session
+            user_id: User ID making the purchase
+            package_id: ID of the credit package
+            
+        Returns:
+            Dict with client_secret and payment_intent_id
+            
+        Raises:
+            ValueError: If package not found or Stripe not configured
+        """
+        if not settings.stripe_secret_key:
+            logger.error("Stripe secret key not configured")
+            raise ValueError("Stripe is not configured")
+        
+        # Ensure Stripe API key is set (in case it wasn't initialized)
+        if not stripe.api_key or stripe.api_key != settings.stripe_secret_key:
+            stripe.api_key = settings.stripe_secret_key
+            logger.info("Stripe API key configured")
+        
+        logger.info(f"Creating payment intent for package {package_id}, user {user_id}")
+        
+        # Get the package from Stripe
+        package = StripeService.get_package(package_id)
+        if not package:
+            logger.error(f"Package '{package_id}' not found in Stripe")
+            raise ValueError(f"Package '{package_id}' not found")
+        
+        price_id = package.get('price_id')
+        if not price_id:
+            logger.error(f"Package '{package_id}' has no price_id")
+            raise ValueError(f"Package '{package_id}' has no valid price")
+        
+        logger.info(f"Package found: {package['name']}, price: {package['price_cents']} cents, price_id: {price_id}")
+        
+        # Verify user exists
+        try:
+            result = await db.execute(
+                select(User).where(User.id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                logger.error(f"User {user_id} not found")
+                raise ValueError("User not found")
+            
+            logger.info(f"User found: {user.email if user.email else user_id}, user_id type: {type(user_id)}")
+        except Exception as user_error:
+            logger.error(f"Error querying user: {user_error}")
+            raise ValueError(f"Error finding user: {str(user_error)}")
+        
+        try:
+            logger.info(f"Calling Stripe API to create payment intent with price_id: {price_id}...")
+            # Create Stripe Payment Intent using price_id
+            # Note: Payment Intent doesn't directly support price_id, so we use amount
+            # But we store the price_id in metadata for reference
+            payment_intent = stripe.PaymentIntent.create(
+                amount=package['price_cents'],
+                currency=package['currency'],
+                payment_method_types=["card"],
+                metadata={
+                    "user_id": str(user_id),
+                    "credits": str(package['credits']),
+                    "package_id": package_id,
+                    "product_id": package.get('product_id', package_id),
+                    "price_id": price_id,
+                },
+                description=f"SecondBrain {package['name']} - {package['credits']} AI Credits",
+                receipt_email=user.email if user.email else None,
+            )
+            logger.info(f"Stripe payment intent created: {payment_intent.id}")
+            
+            if not payment_intent.client_secret:
+                logger.error(f"Payment intent created but missing client_secret: {payment_intent.id}")
+                raise ValueError("Payment intent created but missing client_secret")
+            
+            # Create pending payment record
+            try:
+                payment = Payment(
+                    user_id=str(user_id),
+                    stripe_payment_intent_id=payment_intent.id,
+                    amount_cents=package['price_cents'],
+                    currency=package['currency'],
+                    credits_amount=package['credits'],
+                    status=PaymentStatus.PENDING,
+                    package_id=package_id,
+                )
+                db.add(payment)
+                await db.commit()
+                logger.info(f"Payment record created in database: {payment.id}")
+            except Exception as db_error:
+                logger.error(f"Error saving payment to database: {db_error}")
+                await db.rollback()
+                raise ValueError(f"Failed to save payment record: {str(db_error)}")
+            
+            logger.info(
+                f"Created payment intent {payment_intent.id} for user {user_id}, "
+                f"package {package_id} ({package.credits} credits)"
+            )
+            
+            return {
+                "client_secret": payment_intent.client_secret,
+                "payment_intent_id": payment_intent.id,
+            }
+            
+        except stripe.error.StripeError as e:
+            error_msg = f"Stripe API error: {str(e)}"
+            if hasattr(e, 'user_message'):
+                error_msg = f"{error_msg} - {e.user_message}"
+            logger.error(f"Stripe error creating payment intent: {error_msg}")
+            await db.rollback()
+            raise ValueError(error_msg)
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Unexpected error creating payment intent: {e}\n{error_trace}")
+            await db.rollback()
+            raise ValueError(f"Unexpected error: {str(e)}")
     
     @staticmethod
     async def mark_payment_completed(
@@ -248,6 +474,45 @@ class StripeService:
         payment.completed_at = datetime.utcnow()
         if stripe_payment_intent_id:
             payment.stripe_payment_intent_id = stripe_payment_intent_id
+        
+        # Don't commit here - let caller handle transaction
+        return payment
+    
+    @staticmethod
+    async def mark_payment_completed_by_intent(
+        db: AsyncSession,
+        stripe_payment_intent_id: str,
+    ) -> Optional[Payment]:
+        """
+        Mark a payment as completed by payment intent ID (called from webhook).
+        Returns the payment if found and updated, None if already processed.
+        
+        Args:
+            db: Database session
+            stripe_payment_intent_id: Stripe payment intent ID
+            
+        Returns:
+            Payment record or None if already completed
+        """
+        result = await db.execute(
+            select(Payment).where(
+                Payment.stripe_payment_intent_id == stripe_payment_intent_id
+            )
+        )
+        payment = result.scalar_one_or_none()
+        
+        if not payment:
+            logger.warning(f"Payment not found for intent {stripe_payment_intent_id}")
+            return None
+        
+        # Idempotency check - already completed
+        if payment.status == PaymentStatus.COMPLETED:
+            logger.info(f"Payment {payment.id} already completed, skipping")
+            return None
+        
+        # Update payment status
+        payment.status = PaymentStatus.COMPLETED
+        payment.completed_at = datetime.utcnow()
         
         # Don't commit here - let caller handle transaction
         return payment
