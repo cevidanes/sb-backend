@@ -14,6 +14,64 @@ from app.auth.firebase import get_firebase_app
 logger = logging.getLogger(__name__)
 
 
+def _get_session_ready_messages(language: str, session_title: Optional[str] = None) -> tuple[str, str]:
+    """
+    Get localized session ready notification messages.
+    
+    Args:
+        language: User's preferred language ('pt' or 'en')
+        session_title: Optional session title
+        
+    Returns:
+        Tuple of (title, body) in the specified language
+    """
+    if language == 'en':
+        title = "Analysis ready!"
+        if session_title:
+            body = f"'{session_title}' is ready for viewing."
+        else:
+            body = "Your session is ready for viewing."
+    else:
+        title = "Análise pronta!"
+        if session_title:
+            body = f"'{session_title}' está pronta para visualização."
+        else:
+            body = "Sua sessão está pronta para visualização."
+    
+    return title, body
+
+
+def _get_low_credits_messages(language: str, credits_balance: int) -> tuple[str, str]:
+    """
+    Get localized low credits notification messages.
+    
+    Args:
+        language: User's preferred language ('pt' or 'en')
+        credits_balance: Current credit balance
+        
+    Returns:
+        Tuple of (title, body) in the specified language
+    """
+    if language == 'en':
+        title = "Credits running low!"
+        if credits_balance == 0:
+            body = "You have no credits left. Recharge to continue using AI."
+        elif credits_balance == 1:
+            body = f"You have only {credits_balance} credit remaining. Recharge now!"
+        else:
+            body = f"You have only {credits_balance} credits remaining. Recharge now!"
+    else:
+        title = "Créditos acabando!"
+        if credits_balance == 0:
+            body = "Você não tem mais créditos. Recarregue para continuar usando a IA."
+        elif credits_balance == 1:
+            body = f"Você tem apenas {credits_balance} crédito restante. Recarregue agora!"
+        else:
+            body = f"Você tem apenas {credits_balance} créditos restantes. Recarregue agora!"
+    
+    return title, body
+
+
 class FCMService:
     """Service for sending FCM push notifications."""
     
@@ -58,11 +116,11 @@ class FCMService:
                 logger.warning("Firebase Admin SDK not initialized, cannot send FCM notification")
                 return False
             
+            # Get user's preferred language (default to 'pt')
+            preferred_language = user.preferred_language or 'pt'
+            
             # Prepare notification message
-            title = "Análise pronta!"
-            body = f"Sua sessão está pronta para visualização."
-            if session_title:
-                body = f"'{session_title}' está pronta para visualização."
+            title, body = _get_session_ready_messages(preferred_language, session_title)
             
             message = messaging.Message(
                 notification=messaging.Notification(
@@ -141,14 +199,11 @@ class FCMService:
                 logger.warning("Firebase Admin SDK not initialized, cannot send FCM notification")
                 return False
             
+            # Get user's preferred language (default to 'pt')
+            preferred_language = user.preferred_language or 'pt'
+            
             # Prepare notification message
-            title = "Créditos acabando!"
-            if credits_balance == 0:
-                body = "Você não tem mais créditos. Recarregue para continuar usando a IA."
-            elif credits_balance == 1:
-                body = f"Você tem apenas {credits_balance} crédito restante. Recarregue agora!"
-            else:
-                body = f"Você tem apenas {credits_balance} créditos restantes. Recarregue agora!"
+            title, body = _get_low_credits_messages(preferred_language, credits_balance)
             
             message = messaging.Message(
                 notification=messaging.Notification(

@@ -19,6 +19,7 @@ class User(Base):
     email = Column(String(255), nullable=True)  # Email from Firebase token
     credits = Column(Integer, nullable=False, default=0)  # AI credits balance
     fcm_token = Column(String(512), nullable=True)  # Firebase Cloud Messaging token
+    preferred_language = Column(String(2), nullable=True, default='pt')  # Preferred language for notifications (pt, en)
     
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     

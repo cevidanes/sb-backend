@@ -74,3 +74,48 @@ async def update_fcm_token(
         message="FCM token updated successfully"
     )
 
+
+class PreferredLanguageRequest(BaseModel):
+    """Request schema for preferred language endpoint."""
+    language: str
+
+
+class PreferredLanguageResponse(BaseModel):
+    """Response schema for preferred language endpoint."""
+    success: bool
+    message: str
+
+
+@router.post("/preferred-language", response_model=PreferredLanguageResponse)
+async def update_preferred_language(
+    request: PreferredLanguageRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update preferred language for authenticated user.
+    Used to send notifications in the user's preferred language.
+    Requires valid Firebase JWT token.
+    """
+    if not request.language or len(request.language.strip()) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Language cannot be empty"
+        )
+    
+    language = request.language.strip().lower()
+    if language not in ['pt', 'en']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Language must be 'pt' or 'en'"
+        )
+    
+    current_user.preferred_language = language
+    await db.commit()
+    await db.refresh(current_user)
+    
+    return PreferredLanguageResponse(
+        success=True,
+        message="Preferred language updated successfully"
+    )
+
