@@ -2,22 +2,30 @@
 Session endpoints for creating sessions, adding blocks, and finalizing.
 All endpoints require Firebase JWT authentication.
 """
+import asyncio
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
 
 from app.database import get_db
 from app.models.user import User
+from app.models.media_file import MediaFile
+from app.models.session_block import SessionBlock
 from app.auth.dependencies import get_current_user
 from app.schemas.session import SessionCreate, SessionResponse, SessionFinalizeResponse
 from app.schemas.block import BlockCreate, BlockResponse
 from app.services.session_service import SessionService
 from app.services.credit_service import CreditService
 from app.services.fcm_service import FCMService
+from app.storage.r2_client import get_r2_client
 from celery import chain
 from app.tasks.transcribe_audio import transcribe_audio_task
 from app.tasks.process_images import process_images_task
 from app.tasks.generate_summary import generate_summary_task
 from app.models.ai_job import AIJob, AIJobStatus
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -318,5 +326,79 @@ async def delete_session(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete session: {str(e)}"
+        )
+
+
+@router.delete("/{session_id}/media/{media_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session_media(
+    session_id: str,
+    media_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete a specific media file from a session.
+    Requires valid Firebase JWT token.
+    
+    This will delete:
+    - Physical file from R2 storage
+    - SessionBlock that references this media (if any)
+    - MediaFile record from database
+    
+    Returns 204 No Content on success.
+    Returns 404 if session or media not found or doesn't belong to user.
+    """
+    try:
+        session = await SessionService.get_session(
+            db,
+            session_id=session_id,
+            user_id=current_user.id
+        )
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found or does not belong to user"
+            )
+        
+        result = await db.execute(
+            select(MediaFile).where(
+                MediaFile.id == media_id,
+                MediaFile.session_id == session_id
+            )
+        )
+        media_file = result.scalar_one_or_none()
+        
+        if not media_file:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Media file not found in this session"
+            )
+        
+        if media_file.object_key:
+            r2_client = get_r2_client()
+            if r2_client.is_configured:
+                logger.info(f"Deleting media file from R2: {media_file.object_key}")
+                await asyncio.to_thread(r2_client.delete_object, media_file.object_key)
+        
+        await db.execute(
+            delete(SessionBlock).where(SessionBlock.media_url == media_id)
+        )
+        
+        await db.execute(
+            delete(MediaFile).where(MediaFile.id == media_id)
+        )
+        
+        await db.commit()
+        
+        logger.info(f"Deleted media {media_id} from session {session_id}")
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to delete media {media_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete media: {str(e)}"
         )
 

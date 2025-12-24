@@ -125,6 +125,9 @@ async def _process_images_async(session_id: str, ai_job_id: str):
     WorkerSessionLocal = get_worker_session_local()
     async with WorkerSessionLocal() as db:
         try:
+            # Start with a clean transaction state
+            await db.rollback()
+            
             # Fetch session
             result = await db.execute(
                 select(Session).where(Session.id == session_id)
@@ -214,12 +217,24 @@ async def _process_images_async(session_id: str, ai_job_id: str):
                     )
                     
                     db.add(description_block)
-                    descriptions_created += 1
                     
-                    logger.info(
-                        f"Image description created for image {image_file.id}: "
-                        f"{len(image_description)} chars"
-                    )
+                    # Commit each description individually to avoid batch insert issues
+                    # and to ensure partial success if one image fails
+                    try:
+                        await db.commit()
+                        descriptions_created += 1
+                        logger.info(
+                            f"Image description created and committed for image {image_file.id}: "
+                            f"{len(image_description)} chars"
+                        )
+                    except Exception as commit_error:
+                        await db.rollback()
+                        descriptions_failed += 1
+                        logger.error(
+                            f"Failed to commit image description for {image_file.id}: {commit_error}",
+                            exc_info=True
+                        )
+                        continue
                     
                 except Exception as e:
                     descriptions_failed += 1
@@ -227,6 +242,11 @@ async def _process_images_async(session_id: str, ai_job_id: str):
                         f"Failed to process image file {image_file.id}: {e}",
                         exc_info=True
                     )
+                    # Rollback any pending changes before continuing
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
                     # Continue with other files
                     continue
                 finally:
@@ -236,9 +256,6 @@ async def _process_images_async(session_id: str, ai_job_id: str):
                             os.remove(temp_file_path)
                         except Exception as e:
                             logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
-            
-            # Commit all descriptions
-            await db.commit()
             
             logger.info(
                 f"Image processing complete for session {session_id}: "
