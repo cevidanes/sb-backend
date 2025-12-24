@@ -16,6 +16,9 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_CREDIT_PACKAGES = {10, 25, 100, 1000}
+POPULAR_PACKAGE_CREDITS = 100
+
 
 @dataclass
 class CreditPackage:
@@ -82,6 +85,9 @@ class StripeService:
         Fetches active products and prices from Stripe and maps them
         to credit packages based on metadata.
         
+        Only returns packages with 10, 25, 100, or 1000 credits.
+        Package with 100 credits is automatically marked as popular.
+        
         Returns:
             List of package dictionaries with pricing info
         """
@@ -90,11 +96,9 @@ class StripeService:
             return []
         
         try:
-            # Ensure Stripe API key is set
             if not stripe.api_key or stripe.api_key != settings.stripe_secret_key:
                 stripe.api_key = settings.stripe_secret_key
             
-            # Fetch active products with metadata
             products = stripe.Product.list(active=True, limit=100)
             logger.info(f"Found {len(products.data)} active products in Stripe")
             
@@ -102,7 +106,6 @@ class StripeService:
             for product in products.data:
                 metadata = product.metadata or {}
                 
-                # Try to get credits from metadata first
                 credits = None
                 if 'credits' in metadata:
                     try:
@@ -110,37 +113,33 @@ class StripeService:
                     except (ValueError, TypeError):
                         credits = None
                 
-                # If no metadata credits, try to extract from product name
                 if credits is None or credits == 0:
                     try:
-                        # Try to parse product name as integer (e.g., "100", "50", "25", "10")
                         product_name_clean = product.name.strip()
                         credits = int(product_name_clean)
                         logger.info(f"Extracted credits from product name '{product.name}': {credits}")
                     except (ValueError, TypeError):
-                        # If name is not a number, skip this product
                         logger.debug(f"Skipping product '{product.name}' - no credits metadata and name is not a number")
                         continue
                 
-                if credits <= 0:
-                    logger.debug(f"Skipping product '{product.name}' - invalid credits value: {credits}")
+                if credits not in ALLOWED_CREDIT_PACKAGES:
+                    logger.debug(f"Skipping product '{product.name}' - credits {credits} not in allowed packages {ALLOWED_CREDIT_PACKAGES}")
                     continue
                 
-                # Get the default price for this product
                 default_price_id = product.default_price
                 if not default_price_id:
-                    # Try to get the first active price
                     prices = stripe.Price.list(product=product.id, active=True, limit=1)
                     if not prices.data:
                         logger.debug(f"Skipping product '{product.name}' - no active prices")
                         continue
                     default_price_id = prices.data[0].id
                 
-                # Get price details
                 price = stripe.Price.retrieve(default_price_id)
                 
                 price_cents = price.unit_amount or 0
                 currency = price.currency or 'usd'
+                
+                is_popular = credits == POPULAR_PACKAGE_CREDITS
                 
                 packages.append({
                     "id": product.id,
@@ -150,13 +149,12 @@ class StripeService:
                     "price_formatted": f"${price_cents / 100:.2f}",
                     "currency": currency,
                     "description": product.description or metadata.get('description', ''),
-                    "popular": metadata.get('popular', 'false').lower() == 'true',
+                    "popular": is_popular,
                     "price_per_credit": round(price_cents / credits, 2) if credits > 0 else 0,
                     "price_id": price.id,
                     "product_id": product.id,
                 })
             
-            # Sort by price_cents
             packages.sort(key=lambda x: x['price_cents'])
             
             logger.info(f"Retrieved {len(packages)} packages from Stripe (out of {len(products.data)} products)")
@@ -189,14 +187,11 @@ class StripeService:
             return None
         
         try:
-            # Ensure Stripe API key is set
             if not stripe.api_key or stripe.api_key != settings.stripe_secret_key:
                 stripe.api_key = settings.stripe_secret_key
             
-            # Retrieve product from Stripe
             product = stripe.Product.retrieve(package_id)
             
-            # Get price
             default_price_id = product.default_price
             if not default_price_id:
                 prices = stripe.Price.list(product=product.id, active=True, limit=1)
@@ -208,7 +203,6 @@ class StripeService:
             
             metadata = product.metadata or {}
             
-            # Try to get credits from metadata first
             credits = None
             if 'credits' in metadata:
                 try:
@@ -216,24 +210,23 @@ class StripeService:
                 except (ValueError, TypeError):
                     credits = None
             
-            # If no metadata credits, try to extract from product name
             if credits is None or credits == 0:
                 try:
-                    # Try to parse product name as integer (e.g., "100", "50", "25", "10")
                     product_name_clean = product.name.strip()
                     credits = int(product_name_clean)
                     logger.info(f"Extracted credits from product name '{product.name}': {credits}")
                 except (ValueError, TypeError):
-                    # If name is not a number, return None
                     logger.debug(f"Product '{product.name}' - no credits metadata and name is not a number")
                     return None
             
-            if credits <= 0:
-                logger.debug(f"Product '{product.name}' - invalid credits value: {credits}")
+            if credits not in ALLOWED_CREDIT_PACKAGES:
+                logger.debug(f"Product '{product.name}' - credits {credits} not in allowed packages {ALLOWED_CREDIT_PACKAGES}")
                 return None
             
             price_cents = price.unit_amount or 0
             currency = price.currency or 'usd'
+            
+            is_popular = credits == POPULAR_PACKAGE_CREDITS
             
             return {
                 "id": product.id,
@@ -243,7 +236,7 @@ class StripeService:
                 "price_formatted": f"${price_cents / 100:.2f}",
                 "currency": currency,
                 "description": product.description or metadata.get('description', ''),
-                "popular": metadata.get('popular', 'false').lower() == 'true',
+                "popular": is_popular,
                 "price_per_credit": round(price_cents / credits, 2) if credits > 0 else 0,
                 "price_id": price.id,
                 "product_id": product.id,
