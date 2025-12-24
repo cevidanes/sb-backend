@@ -453,7 +453,7 @@ class StripeService:
             
             logger.info(
                 f"Created payment intent {payment_intent.id} for user {user_id}, "
-                f"package {package_id} ({package.credits} credits)"
+                f"package {package_id} ({package['credits']} credits)"
             )
             
             return {

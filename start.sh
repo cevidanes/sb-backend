@@ -41,7 +41,7 @@ start_stripe_listener() {
     # Inicia em background e salva o PID
     nohup $STRIPE_CLI listen \
         --forward-to "$WEBHOOK_ENDPOINT" \
-        --events checkout.session.completed,checkout.session.expired \
+        --events checkout.session.completed,checkout.session.expired,payment_intent.succeeded,payment_intent.payment_failed \
         > /tmp/stripe-webhook.log 2>&1 &
     
     STRIPE_PID=$!
