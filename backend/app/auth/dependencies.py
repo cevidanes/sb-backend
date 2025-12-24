@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models.user import User
 from app.auth.firebase import verify_firebase_token
+from app.services.stripe_service import stripe_service
 
 # HTTPBearer scheme for extracting Authorization header
 security = HTTPBearer()
@@ -84,6 +85,28 @@ async def get_current_user(
         db.add(user)
         await db.commit()
         await db.refresh(user)
+    
+    # Ensure user has Stripe customer ID
+    # This allows tracking all users (paying and non-paying) in Stripe
+    if email:
+        try:
+            # Check if stripe_customer_id field exists (in case migration not run yet)
+            stripe_customer_id = getattr(user, 'stripe_customer_id', None)
+            if not stripe_customer_id:
+                # Get user name from Firebase token if available
+                name = decoded_token.get("name") or None
+                stripe_customer_id = await stripe_service.ensure_stripe_customer(
+                    email=email,
+                    name=name
+                )
+                if stripe_customer_id and hasattr(user, 'stripe_customer_id'):
+                    user.stripe_customer_id = stripe_customer_id
+                    await db.commit()
+        except Exception as e:
+            # Log error but don't fail authentication
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to create Stripe customer for user {user.id}: {e}")
     
     return user
 

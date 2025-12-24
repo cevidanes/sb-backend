@@ -96,12 +96,34 @@ class StripeService:
             
             # Fetch active products with metadata
             products = stripe.Product.list(active=True, limit=100)
+            logger.info(f"Found {len(products.data)} active products in Stripe")
             
             packages = []
             for product in products.data:
-                # Check if product has credit package metadata
                 metadata = product.metadata or {}
-                if 'credits' not in metadata:
+                
+                # Try to get credits from metadata first
+                credits = None
+                if 'credits' in metadata:
+                    try:
+                        credits = int(metadata.get('credits', 0))
+                    except (ValueError, TypeError):
+                        credits = None
+                
+                # If no metadata credits, try to extract from product name
+                if credits is None or credits == 0:
+                    try:
+                        # Try to parse product name as integer (e.g., "100", "50", "25", "10")
+                        product_name_clean = product.name.strip()
+                        credits = int(product_name_clean)
+                        logger.info(f"Extracted credits from product name '{product.name}': {credits}")
+                    except (ValueError, TypeError):
+                        # If name is not a number, skip this product
+                        logger.debug(f"Skipping product '{product.name}' - no credits metadata and name is not a number")
+                        continue
+                
+                if credits <= 0:
+                    logger.debug(f"Skipping product '{product.name}' - invalid credits value: {credits}")
                     continue
                 
                 # Get the default price for this product
@@ -110,15 +132,12 @@ class StripeService:
                     # Try to get the first active price
                     prices = stripe.Price.list(product=product.id, active=True, limit=1)
                     if not prices.data:
+                        logger.debug(f"Skipping product '{product.name}' - no active prices")
                         continue
                     default_price_id = prices.data[0].id
                 
                 # Get price details
                 price = stripe.Price.retrieve(default_price_id)
-                
-                credits = int(metadata.get('credits', 0))
-                if credits == 0:
-                    continue
                 
                 price_cents = price.unit_amount or 0
                 currency = price.currency or 'usd'
@@ -140,7 +159,12 @@ class StripeService:
             # Sort by price_cents
             packages.sort(key=lambda x: x['price_cents'])
             
-            logger.info(f"Retrieved {len(packages)} packages from Stripe")
+            logger.info(f"Retrieved {len(packages)} packages from Stripe (out of {len(products.data)} products)")
+            if len(packages) == 0 and len(products.data) > 0:
+                logger.warning("No packages found but products exist. Check product names/metadata.")
+                for product in products.data:
+                    logger.debug(f"Product: {product.name}, metadata: {product.metadata}, default_price: {product.default_price}")
+            
             return packages
             
         except stripe.error.StripeError as e:
@@ -183,8 +207,29 @@ class StripeService:
             price = stripe.Price.retrieve(default_price_id)
             
             metadata = product.metadata or {}
-            credits = int(metadata.get('credits', 0))
-            if credits == 0:
+            
+            # Try to get credits from metadata first
+            credits = None
+            if 'credits' in metadata:
+                try:
+                    credits = int(metadata.get('credits', 0))
+                except (ValueError, TypeError):
+                    credits = None
+            
+            # If no metadata credits, try to extract from product name
+            if credits is None or credits == 0:
+                try:
+                    # Try to parse product name as integer (e.g., "100", "50", "25", "10")
+                    product_name_clean = product.name.strip()
+                    credits = int(product_name_clean)
+                    logger.info(f"Extracted credits from product name '{product.name}': {credits}")
+                except (ValueError, TypeError):
+                    # If name is not a number, return None
+                    logger.debug(f"Product '{product.name}' - no credits metadata and name is not a number")
+                    return None
+            
+            if credits <= 0:
+                logger.debug(f"Product '{product.name}' - invalid credits value: {credits}")
                 return None
             
             price_cents = price.unit_amount or 0
@@ -195,9 +240,11 @@ class StripeService:
                 "name": product.name,
                 "credits": credits,
                 "price_cents": price_cents,
+                "price_formatted": f"${price_cents / 100:.2f}",
                 "currency": currency,
                 "description": product.description or metadata.get('description', ''),
                 "popular": metadata.get('popular', 'false').lower() == 'true',
+                "price_per_credit": round(price_cents / credits, 2) if credits > 0 else 0,
                 "price_id": price.id,
                 "product_id": product.id,
             }
@@ -541,6 +588,67 @@ class StripeService:
             .limit(limit)
         )
         return list(result.scalars().all())
+    
+    @staticmethod
+    async def ensure_stripe_customer(
+        email: str,
+        name: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Ensure a Stripe customer exists for the given email.
+        If customer doesn't exist, creates one. If exists, returns existing customer ID.
+        
+        Args:
+            email: User email address
+            name: Optional user name
+            
+        Returns:
+            Stripe customer ID or None if Stripe is not configured
+            
+        Raises:
+            ValueError: If email is not provided
+        """
+        if not email:
+            raise ValueError("Email is required to create Stripe customer")
+        
+        if not settings.stripe_secret_key:
+            logger.debug("Stripe not configured, skipping customer creation")
+            return None
+        
+        try:
+            # Ensure Stripe API key is set
+            if not stripe.api_key or stripe.api_key != settings.stripe_secret_key:
+                stripe.api_key = settings.stripe_secret_key
+            
+            # Search for existing customer by email
+            customers = stripe.Customer.list(
+                email=email,
+                limit=1
+            )
+            
+            if customers.data:
+                # Customer already exists
+                customer_id = customers.data[0].id
+                logger.info(f"Found existing Stripe customer {customer_id} for email {email}")
+                return customer_id
+            
+            # Create new customer
+            customer_data = {
+                "email": email,
+            }
+            if name:
+                customer_data["name"] = name
+            
+            customer = stripe.Customer.create(**customer_data)
+            logger.info(f"Created new Stripe customer {customer.id} for email {email}")
+            return customer.id
+            
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error ensuring customer for {email}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error ensuring Stripe customer: {e}")
+            return None
 
 
 # Singleton instance

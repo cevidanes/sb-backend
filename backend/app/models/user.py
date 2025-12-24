@@ -20,6 +20,7 @@ class User(Base):
     credits = Column(Integer, nullable=False, default=0)  # AI credits balance
     fcm_token = Column(String(512), nullable=True)  # Firebase Cloud Messaging token
     preferred_language = Column(String(2), nullable=True, default='pt')  # Preferred language for notifications (pt, en)
+    stripe_customer_id = Column(String(255), nullable=True)  # Stripe customer ID
     
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     

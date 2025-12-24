@@ -29,12 +29,21 @@ async def get_credits(
     Get current credit balance for authenticated user.
     Requires valid Firebase JWT token.
     """
-    balance = await CreditService.get_balance(db, current_user.id)
-    
-    return CreditsResponse(
-        credits=balance,
-        user_id=current_user.id
-    )
+    try:
+        balance = await CreditService.get_balance(db, current_user.id)
+        
+        return CreditsResponse(
+            credits=balance,
+            user_id=current_user.id
+        )
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error getting credits for user {current_user.id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve credits balance"
+        )
 
 
 class FCMTokenRequest(BaseModel):
