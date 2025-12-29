@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Embedding Provider Configuration
     # NOTE: DeepSeek does NOT support embeddings, so we use OpenAI for embeddings by default
     embedding_provider: Optional[str] = None  # "openai" only (deepseek doesn't support embeddings)
+    enable_embeddings: bool = False  # Feature flag to enable/disable embedding generation
     
     # OpenAI (optional - only used in workers)
     openai_api_key: Optional[str] = None

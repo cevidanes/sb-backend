@@ -156,18 +156,25 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 logger.error(f"Failed to get LLM provider: {e}")
                 raise
             
-            # Get separate embedding provider (OpenAI - DeepSeek doesn't support embeddings)
-            try:
-                embedding_provider = get_embedding_provider()
-                embedding_provider_name = get_embedding_provider_name()
-            except ValueError as e:
-                logger.error(f"Failed to get embedding provider: {e}")
-                raise
-            
-            # Step 1: Generate embeddings for text content (chunked)
+            # Step 1: Generate embeddings for text content (chunked) - if enabled
             # Embeddings are generated independently from summaries
             embeddings_created = 0
             embeddings_failed = 0
+            
+            if settings.enable_embeddings:
+                # Get separate embedding provider (OpenAI - DeepSeek doesn't support embeddings)
+                try:
+                    embedding_provider = get_embedding_provider()
+                    embedding_provider_name = get_embedding_provider_name()
+                except ValueError as e:
+                    logger.error(f"Failed to get embedding provider: {e}")
+                    logger.warning("Skipping embedding generation due to provider error")
+                    embedding_provider = None
+                    embedding_provider_name = None
+            else:
+                logger.info(f"Embeddings disabled via ENABLE_EMBEDDINGS flag, skipping embedding generation")
+                embedding_provider = None
+                embedding_provider_name = None
             
             # Extract all text content from blocks
             all_text_parts = []
@@ -175,7 +182,7 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 if block.text_content:
                     all_text_parts.append(block.text_content)
             
-            if all_text_parts:
+            if all_text_parts and settings.enable_embeddings and embedding_provider:
                 # Combine all text and chunk it
                 combined_text = "\n\n".join(all_text_parts)
                 text_chunks = chunk_text(combined_text, chunk_size=600, overlap=50)
