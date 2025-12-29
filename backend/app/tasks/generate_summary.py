@@ -5,6 +5,7 @@ Collects all session blocks (text, transcriptions, image descriptions) and gener
 import asyncio
 import threading
 import logging
+import gc
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select
 from datetime import datetime
@@ -186,45 +187,62 @@ async def _generate_summary_async(session_id: str, ai_job_id: str):
             if all_text_parts:
                 # Combine all text and chunk it
                 combined_text = "\n\n".join(all_text_parts)
-                text_chunks = chunk_text(combined_text, chunk_size=600, overlap=50)
+                # Use larger chunks and less overlap to reduce number of embeddings
+                text_chunks = chunk_text(combined_text, chunk_size=1000, overlap=100)
+                
+                # Limit number of chunks to prevent memory issues
+                MAX_CHUNKS = 50
+                if len(text_chunks) > MAX_CHUNKS:
+                    logger.warning(
+                        f"Session {session_id} has {len(text_chunks)} chunks, "
+                        f"limiting to {MAX_CHUNKS} to prevent memory issues"
+                    )
+                    text_chunks = text_chunks[:MAX_CHUNKS]
                 
                 logger.info(
                     f"Chunked session {session_id} text into {len(text_chunks)} chunks "
                     f"(total text length: {len(combined_text)} chars)"
                 )
                 
-                # Generate embedding for each chunk using embedding provider (OpenAI)
-                for chunk_idx, chunk in enumerate(text_chunks):
-                    try:
-                        embedding_vector = embedding_provider.embed(chunk)
-                        
-                        await EmbeddingRepository.create_embedding(
-                            db=db,
-                            session_id=session_id,
-                            provider=embedding_provider_name,
-                            embedding_vector=embedding_vector,
-                            text=chunk,
-                            block_id=None
-                        )
-                        
-                        embeddings_created += 1
-                        
-                        if (chunk_idx + 1) % 10 == 0:
-                            logger.debug(
-                                f"Generated {chunk_idx + 1}/{len(text_chunks)} embeddings "
-                                f"for session {session_id}"
+                # Process embeddings in batches to manage memory
+                BATCH_SIZE = 10
+                for batch_start in range(0, len(text_chunks), BATCH_SIZE):
+                    batch_end = min(batch_start + BATCH_SIZE, len(text_chunks))
+                    batch_chunks = text_chunks[batch_start:batch_end]
+                    
+                    for chunk_idx, chunk in enumerate(batch_chunks, start=batch_start):
+                        try:
+                            embedding_vector = embedding_provider.embed(chunk)
+                            
+                            await EmbeddingRepository.create_embedding(
+                                db=db,
+                                session_id=session_id,
+                                provider=embedding_provider_name,
+                                embedding_vector=embedding_vector,
+                                text=chunk,
+                                block_id=None
                             )
                             
-                    except Exception as e:
-                        embeddings_failed += 1
-                        logger.error(
-                            f"Failed to generate embedding for chunk {chunk_idx} "
-                            f"of session {session_id}: {e}",
-                            exc_info=True
-                        )
-                        continue
-                
-                await db.commit()
+                            embeddings_created += 1
+                                
+                        except Exception as e:
+                            embeddings_failed += 1
+                            logger.error(
+                                f"Failed to generate embedding for chunk {chunk_idx} "
+                                f"of session {session_id}: {e}",
+                                exc_info=True
+                            )
+                            continue
+                    
+                    # Commit and garbage collect after each batch
+                    await db.commit()
+                    gc.collect()
+                    
+                    logger.info(
+                        f"Processed embedding batch {batch_start//BATCH_SIZE + 1}/"
+                        f"{(len(text_chunks) + BATCH_SIZE - 1)//BATCH_SIZE} "
+                        f"for session {session_id}"
+                    )
                 
                 logger.info(
                     f"Embedding generation complete for session {session_id}: "
