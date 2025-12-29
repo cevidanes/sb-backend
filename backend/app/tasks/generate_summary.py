@@ -13,7 +13,7 @@ from app.config import settings
 from app.models.session import Session, SessionStatus
 from app.models.session_block import SessionBlock, BlockType
 from app.models.ai_job import AIJob, AIJobStatus
-from app.ai.factory import get_llm_provider, get_provider_name
+from app.ai.factory import get_llm_provider, get_provider_name, get_embedding_provider, get_embedding_provider_name
 from app.utils.text_chunker import chunk_text
 from app.repositories.embedding_repository import EmbeddingRepository
 from app.workers.celery_app import celery_app
@@ -152,12 +152,20 @@ async def _generate_summary_async(session_id: str, ai_job_id: str):
             
             logger.info(f"Processing session {session_id} with {len(all_blocks)} blocks")
             
-            # Get LLM provider
+            # Get LLM provider for chat/summaries
             try:
                 provider = get_llm_provider()
                 provider_name = get_provider_name()
             except ValueError as e:
                 logger.error(f"Failed to get LLM provider: {e}")
+                raise
+            
+            # Get separate embedding provider (OpenAI - DeepSeek doesn't support embeddings)
+            try:
+                embedding_provider = get_embedding_provider()
+                embedding_provider_name = get_embedding_provider_name()
+            except ValueError as e:
+                logger.error(f"Failed to get embedding provider: {e}")
                 raise
             
             # Step 1: Generate embeddings for all text content
@@ -185,15 +193,15 @@ async def _generate_summary_async(session_id: str, ai_job_id: str):
                     f"(total text length: {len(combined_text)} chars)"
                 )
                 
-                # Generate embedding for each chunk
+                # Generate embedding for each chunk using embedding provider (OpenAI)
                 for chunk_idx, chunk in enumerate(text_chunks):
                     try:
-                        embedding_vector = provider.embed(chunk)
+                        embedding_vector = embedding_provider.embed(chunk)
                         
                         await EmbeddingRepository.create_embedding(
                             db=db,
                             session_id=session_id,
-                            provider=provider_name,
+                            provider=embedding_provider_name,
                             embedding_vector=embedding_vector,
                             text=chunk,
                             block_id=None

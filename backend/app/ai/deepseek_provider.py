@@ -26,10 +26,7 @@ class DeepSeekProvider(LLMProvider):
     def __init__(self):
         """Initialize DeepSeek provider with API key from settings."""
         self.api_key = settings.deepseek_api_key
-        # Use configurable embedding model (default: deepseek-embedding)
-        self.embedding_model = settings.deepseek_embedding_model
         self.chat_model = "deepseek-chat"  # Cheapest DeepSeek model
-        self.embedding_dimension = 1536  # Standard dimension for DeepSeek embeddings
         self.base_url = "https://api.deepseek.com"
         
         # Initialize OpenAI-compatible client for DeepSeek
@@ -47,36 +44,22 @@ class DeepSeekProvider(LLMProvider):
     
     def embed(self, text: str) -> List[float]:
         """
-        Generate embedding using DeepSeek API.
+        DeepSeek does NOT support embeddings API.
+        
+        This method will always raise an error. Use OpenAI for embeddings instead.
+        Configure EMBEDDING_PROVIDER=openai and set OPENAI_API_KEY.
         
         Args:
             text: Input text to embed
             
-        Returns:
-            1536-dimensional embedding vector
-            
         Raises:
-            ValueError: If API key not configured
-            Exception: If API call fails
+            NotImplementedError: Always - DeepSeek doesn't support embeddings
         """
-        if not self.is_configured() or not self.client:
-            raise ValueError("DeepSeek API key not configured")
-        
-        try:
-            # Call DeepSeek embeddings API (OpenAI-compatible)
-            # Note: DeepSeek doesn't support 'dimensions' parameter
-            response = self.client.embeddings.create(
-                model=self.embedding_model,
-                input=text
-            )
-            
-            embedding = response.data[0].embedding
-            logger.debug(f"Generated DeepSeek embedding for text (length: {len(text)})")
-            return embedding
-            
-        except Exception as e:
-            logger.error(f"DeepSeek embedding API error: {e}")
-            raise Exception(f"Failed to generate DeepSeek embedding: {str(e)}")
+        raise NotImplementedError(
+            "DeepSeek does NOT support embeddings API. "
+            "Use OpenAI for embeddings by setting EMBEDDING_PROVIDER=openai "
+            "and configuring OPENAI_API_KEY."
+        )
     
     def summarize(self, blocks: List[Dict[str, Any]]) -> str:
         """

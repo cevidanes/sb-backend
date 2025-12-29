@@ -7,6 +7,8 @@ import threading
 import tempfile
 import os
 import logging
+import wave
+import struct
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select
 
@@ -19,6 +21,50 @@ from app.storage.r2_client import get_r2_client
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def convert_pcm_to_wav(pcm_file_path: str, wav_file_path: str, sample_rate: int = 16000, channels: int = 1, sample_width: int = 2) -> bool:
+    """
+    Convert raw PCM audio file to WAV format.
+    
+    iOS typically sends PCM with:
+    - Sample rate: 16000 Hz
+    - Channels: 1 (mono)
+    - Sample width: 2 bytes (16-bit signed integer)
+    
+    Args:
+        pcm_file_path: Path to input PCM file
+        wav_file_path: Path to output WAV file
+        sample_rate: Sample rate in Hz (default 16000)
+        channels: Number of audio channels (default 1 = mono)
+        sample_width: Bytes per sample (default 2 = 16-bit)
+        
+    Returns:
+        True if conversion successful, False otherwise
+    """
+    try:
+        # Read raw PCM data
+        with open(pcm_file_path, 'rb') as pcm_file:
+            pcm_data = pcm_file.read()
+        
+        if len(pcm_data) == 0:
+            logger.error(f"PCM file is empty: {pcm_file_path}")
+            return False
+        
+        # Create WAV file with proper headers
+        with wave.open(wav_file_path, 'wb') as wav_file:
+            wav_file.setnchannels(channels)
+            wav_file.setsampwidth(sample_width)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(pcm_data)
+        
+        logger.info(f"Converted PCM to WAV: {pcm_file_path} -> {wav_file_path} ({len(pcm_data)} bytes)")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to convert PCM to WAV: {e}")
+        return False
+
 
 # Create async engine for worker (separate from API)
 # Create engine and sessionmaker at module level - they are thread-safe
@@ -153,27 +199,34 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
             # Process each audio file
             for audio_file in audio_files:
                 temp_file_path = None
+                wav_file_path = None
+                is_pcm = False
                 try:
                     # Download audio file from R2 to temporary file
-                    # Determine file extension from content_type or object_key
+                    # Determine if it's PCM format that needs conversion
                     file_ext = "tmp"
+                    is_pcm = False
+                    
                     if audio_file.content_type:
-                        if "pcm" in audio_file.content_type.lower():
-                            # PCM files need to be converted or renamed for Whisper API
-                            # Whisper accepts WAV, so we'll use .wav extension
-                            file_ext = "wav"
-                        elif "m4a" in audio_file.content_type.lower():
+                        content_type_lower = audio_file.content_type.lower()
+                        if "pcm" in content_type_lower or "raw" in content_type_lower:
+                            is_pcm = True
+                            file_ext = "pcm"
+                        elif "m4a" in content_type_lower:
                             file_ext = "m4a"
-                        elif "mp3" in audio_file.content_type.lower():
+                        elif "mp3" in content_type_lower:
                             file_ext = "mp3"
-                        elif "wav" in audio_file.content_type.lower():
+                        elif "wav" in content_type_lower:
                             file_ext = "wav"
-                        else:
-                            # Try to extract from object_key
-                            if audio_file.object_key.endswith(".pcm"):
-                                file_ext = "wav"  # Treat PCM as WAV
-                            elif "." in audio_file.object_key:
-                                file_ext = audio_file.object_key.split(".")[-1]
+                        elif "." in audio_file.object_key:
+                            file_ext = audio_file.object_key.split(".")[-1]
+                    else:
+                        # Try to extract from object_key
+                        if audio_file.object_key.endswith(".pcm"):
+                            is_pcm = True
+                            file_ext = "pcm"
+                        elif "." in audio_file.object_key:
+                            file_ext = audio_file.object_key.split(".")[-1]
                     
                     temp_file_path = os.path.join(tempfile.gettempdir(), f"audio_{audio_file.id}.{file_ext}")
                     
@@ -190,10 +243,22 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
                         transcriptions_failed += 1
                         continue
                     
+                    # Convert PCM to WAV if needed
+                    transcription_file_path = temp_file_path
+                    if is_pcm:
+                        wav_file_path = os.path.join(tempfile.gettempdir(), f"audio_{audio_file.id}.wav")
+                        logger.info(f"Converting PCM to WAV: {temp_file_path} -> {wav_file_path}")
+                        if convert_pcm_to_wav(temp_file_path, wav_file_path):
+                            transcription_file_path = wav_file_path
+                        else:
+                            logger.error(f"Failed to convert PCM to WAV for {audio_file.object_key}")
+                            transcriptions_failed += 1
+                            continue
+                    
                     # Transcribe audio with Groq Whisper
-                    logger.info(f"Transcribing audio file {audio_file.object_key} (format: {file_ext})...")
+                    logger.info(f"Transcribing audio file {audio_file.object_key} (format: {'wav (converted from pcm)' if is_pcm else file_ext})...")
                     transcription_text = groq_provider.transcribe(
-                        temp_file_path,
+                        transcription_file_path,
                         language="pt"  # Portuguese by default
                     )
                     
@@ -223,12 +288,13 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
                     # Continue with other files
                     continue
                 finally:
-                    # Clean up temporary file
-                    if temp_file_path and os.path.exists(temp_file_path):
-                        try:
-                            os.remove(temp_file_path)
-                        except Exception as e:
-                            logger.warning(f"Failed to delete temp file {temp_file_path}: {e}")
+                    # Clean up temporary files
+                    for path in [temp_file_path, wav_file_path]:
+                        if path and os.path.exists(path):
+                            try:
+                                os.remove(path)
+                            except Exception as e:
+                                logger.warning(f"Failed to delete temp file {path}: {e}")
             
             # Commit all transcriptions
             await db.commit()

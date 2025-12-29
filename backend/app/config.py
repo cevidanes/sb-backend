@@ -16,15 +16,19 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     
     # AI Provider Configuration
-    ai_provider: Optional[str] = None  # "openai" or "deepseek", defaults to "openai"
+    ai_provider: Optional[str] = None  # "openai" or "deepseek", defaults to "deepseek"
+    
+    # Embedding Provider Configuration
+    # NOTE: DeepSeek does NOT support embeddings, so we use OpenAI for embeddings by default
+    embedding_provider: Optional[str] = None  # "openai" only (deepseek doesn't support embeddings)
     
     # OpenAI (optional - only used in workers)
     openai_api_key: Optional[str] = None
     openai_embedding_model: str = "text-embedding-3-small"  # Default embedding model
     
-    # DeepSeek (optional - only used in workers)
+    # DeepSeek (optional - only used in workers for chat/summaries ONLY)
+    # NOTE: DeepSeek does NOT provide an embeddings API
     deepseek_api_key: Optional[str] = None
-    deepseek_embedding_model: str = "deepseek-embedding"  # Default embedding model
     
     # Groq (optional - only used in workers for audio transcription)
     groq_api_key: Optional[str] = None

@@ -12,7 +12,7 @@ from app.config import settings
 from app.models.session import Session, SessionStatus
 from app.models.session_block import SessionBlock
 from app.models.ai_job import AIJob, AIJobStatus
-from app.ai.factory import get_llm_provider, get_provider_name
+from app.ai.factory import get_llm_provider, get_provider_name, get_embedding_provider, get_embedding_provider_name
 from app.utils.text_chunker import chunk_text
 from app.repositories.embedding_repository import EmbeddingRepository
 from app.workers.celery_app import celery_app
@@ -146,7 +146,7 @@ async def _process_session_async(session_id: str, ai_job_id: str):
             
             logger.info(f"Processing session {session_id} with AI (user: {session.user_id}, job: {ai_job_id})")
             
-            # Get LLM provider (OpenAI, DeepSeek, etc.)
+            # Get LLM provider for chat/summaries (OpenAI, DeepSeek, etc.)
             # Provider selection is controlled by AI_PROVIDER env var
             # Worker doesn't need to know which provider is being used
             try:
@@ -154,6 +154,14 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                 provider_name = get_provider_name()
             except ValueError as e:
                 logger.error(f"Failed to get LLM provider: {e}")
+                raise
+            
+            # Get separate embedding provider (OpenAI - DeepSeek doesn't support embeddings)
+            try:
+                embedding_provider = get_embedding_provider()
+                embedding_provider_name = get_embedding_provider_name()
+            except ValueError as e:
+                logger.error(f"Failed to get embedding provider: {e}")
                 raise
             
             # Step 1: Generate embeddings for text content (chunked)
@@ -177,17 +185,17 @@ async def _process_session_async(session_id: str, ai_job_id: str):
                     f"(total text length: {len(combined_text)} chars)"
                 )
                 
-                # Generate embedding for each chunk
+                # Generate embedding for each chunk using embedding provider (OpenAI)
                 for chunk_idx, chunk in enumerate(text_chunks):
                     try:
-                        # Generate embedding using provider abstraction
-                        embedding_vector = provider.embed(chunk)
+                        # Generate embedding using embedding provider (OpenAI)
+                        embedding_vector = embedding_provider.embed(chunk)
                         
                         # Store embedding using repository
                         await EmbeddingRepository.create_embedding(
                             db=db,
                             session_id=session_id,
-                            provider=provider_name,
+                            provider=embedding_provider_name,
                             embedding_vector=embedding_vector,
                             text=chunk,
                             block_id=None  # Chunks may span multiple blocks

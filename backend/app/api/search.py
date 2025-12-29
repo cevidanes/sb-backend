@@ -10,7 +10,7 @@ from typing import List, Optional
 from app.database import get_db
 from app.models.user import User
 from app.auth.dependencies import get_current_user
-from app.ai.factory import get_llm_provider
+from app.ai.factory import get_embedding_provider
 from app.repositories.embedding_repository import EmbeddingRepository
 from app.models.session import Session
 from sqlalchemy import select
@@ -60,11 +60,12 @@ async def semantic_search(
         )
     
     try:
-        # Get LLM provider for generating query embedding
-        provider = get_llm_provider()
+        # Get embedding provider for generating query embedding
+        # NOTE: DeepSeek doesn't support embeddings, so this always uses OpenAI
+        embedding_provider = get_embedding_provider()
         
         # Generate embedding for query text
-        query_embedding = provider.embed(query.strip())
+        query_embedding = embedding_provider.embed(query.strip())
         
         # Get all session IDs for the current user
         result = await db.execute(
