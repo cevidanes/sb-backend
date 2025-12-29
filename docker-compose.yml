@@ -1,27 +1,28 @@
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: sb-postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-secondbrain}
-    ports:
-      - "0.0.0.0:${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres-config:/docker-entrypoint-initdb.d
-    command: >
-      postgres
-      -c listen_addresses='*'
-      -c max_connections=100
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - sb-network
+  # PostgreSQL service disabled - using external glassly-postgres container
+  # postgres:
+  #   image: pgvector/pgvector:pg16
+  #   container_name: sb-postgres
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  #     POSTGRES_DB: ${POSTGRES_DB:-secondbrain}
+  #   ports:
+  #     - "0.0.0.0:${POSTGRES_PORT:-5432}:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #     - ./postgres-config:/docker-entrypoint-initdb.d
+  #   command: >
+  #     postgres
+  #     -c listen_addresses='*'
+  #     -c max_connections=100
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - sb-network
 
   redis:
     image: redis:7-alpine
@@ -66,8 +67,8 @@ services:
       R2_PRESIGN_EXPIRATION: ${R2_PRESIGN_EXPIRATION:-600}
       LOG_LEVEL: ${LOG_LEVEL:-debug}
     depends_on:
-      postgres:
-        condition: service_healthy
+      # postgres:
+      #   condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -98,8 +99,8 @@ services:
       R2_SECRET_KEY: ${R2_SECRET_KEY:-}
       R2_REGION: ${R2_REGION:-auto}
     depends_on:
-      postgres:
-        condition: service_healthy
+      # postgres:
+      #   condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -108,7 +109,7 @@ services:
       - sb-network
 
 volumes:
-  postgres_data:
+  # postgres_data:  # Not needed - using external postgres
 
 networks:
   sb-network:
