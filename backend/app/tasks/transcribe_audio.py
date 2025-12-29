@@ -256,10 +256,24 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
                             continue
                     
                     # Transcribe audio with Groq Whisper
-                    logger.info(f"Transcribing audio file {audio_file.object_key} (format: {'wav (converted from pcm)' if is_pcm else file_ext})...")
+                    # Get language from session, default to "pt" if not set
+                    session_language = session.language if session.language else "pt"
+                    # Map locale codes to language codes for Groq Whisper
+                    # Supported: pt, pt_BR -> pt; es_ES -> es; en_US -> en
+                    if session_language.startswith("pt"):
+                        language_code = "pt"
+                    elif session_language.startswith("es"):
+                        language_code = "es"
+                    elif session_language.startswith("en"):
+                        language_code = "en"
+                    else:
+                        # Extract first 2 characters as language code
+                        language_code = session_language[:2] if len(session_language) >= 2 else "pt"
+                    
+                    logger.info(f"Transcribing audio file {audio_file.object_key} (format: {'wav (converted from pcm)' if is_pcm else file_ext}) with language: {language_code}...")
                     transcription_text = groq_provider.transcribe(
                         transcription_file_path,
-                        language="pt"  # Portuguese by default
+                        language=language_code
                     )
                     
                     # Create SessionBlock for transcription

@@ -10,6 +10,7 @@ from app.models.session import SessionStatus
 class SessionCreate(BaseModel):
     """Schema for creating a new session."""
     session_type: str = Field(..., description="Type of session (voice, image, mixed, etc.)")
+    language: Optional[str] = Field(None, description="Language code for audio transcription (e.g., 'pt_BR', 'en_US')")
 
 
 class SessionResponse(BaseModel):
@@ -24,6 +25,7 @@ class SessionResponse(BaseModel):
     processed_at: Optional[datetime] = None
     ai_summary: Optional[str] = None
     suggested_title: Optional[str] = None
+    language: Optional[str] = None
     
     class Config:
         from_attributes = True

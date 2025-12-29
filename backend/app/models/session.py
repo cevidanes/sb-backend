@@ -98,6 +98,9 @@ class Session(Base):
     ai_summary = Column(Text, nullable=True)  # AI-generated summary of the session
     suggested_title = Column(String(255), nullable=True)  # AI-suggested title
     
+    # Audio language for transcription
+    language = Column(String(10), nullable=True)  # Language code like 'pt_BR', 'en_US', etc.
+    
     # Relationships
     blocks = relationship("SessionBlock", back_populates="session", cascade="all, delete-orphan")
     

@@ -44,7 +44,8 @@ async def create_session(
         session = await SessionService.create_session(
             db,
             session_type=session_data.session_type,
-            user_id=current_user.id
+            user_id=current_user.id,
+            language=session_data.language
         )
         return SessionResponse.model_validate(session)
     except Exception as e:

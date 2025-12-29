@@ -43,7 +43,8 @@ class SessionService:
     async def create_session(
         db: AsyncSession,
         session_type: str,
-        user_id: str
+        user_id: str,
+        language: Optional[str] = None
     ) -> Session:
         """
         Create a new session for the authenticated user.
@@ -102,7 +103,8 @@ class SessionService:
         session = Session(
             user_id=user_id,
             session_type=session_type,
-            status=SessionStatus.OPEN
+            status=SessionStatus.OPEN,
+            language=language
         )
         
         # #region agent log
