@@ -158,49 +158,49 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
     try:
         async with WorkerSessionLocal() as db:
             try:
-            # Fetch session
-            result = await db.execute(
-                select(Session).where(Session.id == session_id)
-            )
-            session = result.scalar_one_or_none()
-            
-            if not session:
-                logger.error(f"Session {session_id} not found")
-                return {"session_id": session_id, "ai_job_id": ai_job_id}
-            
-            # Fetch audio MediaFiles for this session
-            result = await db.execute(
-                select(MediaFile).where(
-                    MediaFile.session_id == session_id,
-                    MediaFile.type == MediaType.AUDIO,
-                    MediaFile.status == MediaStatus.UPLOADED
+                # Fetch session
+                result = await db.execute(
+                    select(Session).where(Session.id == session_id)
                 )
-            )
-            audio_files = result.scalars().all()
-            
-            if not audio_files:
-                logger.info(f"No audio files found for session {session_id}")
-                return {"session_id": session_id, "ai_job_id": ai_job_id}
-            
-            logger.info(f"Found {len(audio_files)} audio file(s) for session {session_id}")
-            
-            # Initialize Groq Whisper provider
-            groq_provider = GroqWhisperProvider()
-            if not groq_provider.is_configured():
-                logger.warning("Groq Whisper not configured, skipping audio transcription")
-                return {"session_id": session_id, "ai_job_id": ai_job_id}
-            
-            # Initialize R2 client
-            r2_client = get_r2_client()
-            if not r2_client.is_configured:
-                logger.error("R2 client not configured, cannot download audio files")
-                return {"session_id": session_id, "ai_job_id": ai_job_id}
-            
-            transcriptions_created = 0
-            transcriptions_failed = 0
-            
-            # Process each audio file
-            for audio_file in audio_files:
+                session = result.scalar_one_or_none()
+                
+                if not session:
+                    logger.error(f"Session {session_id} not found")
+                    return {"session_id": session_id, "ai_job_id": ai_job_id}
+                
+                # Fetch audio MediaFiles for this session
+                result = await db.execute(
+                    select(MediaFile).where(
+                        MediaFile.session_id == session_id,
+                        MediaFile.type == MediaType.AUDIO,
+                        MediaFile.status == MediaStatus.UPLOADED
+                    )
+                )
+                audio_files = result.scalars().all()
+                
+                if not audio_files:
+                    logger.info(f"No audio files found for session {session_id}")
+                    return {"session_id": session_id, "ai_job_id": ai_job_id}
+                
+                logger.info(f"Found {len(audio_files)} audio file(s) for session {session_id}")
+                
+                # Initialize Groq Whisper provider
+                groq_provider = GroqWhisperProvider()
+                if not groq_provider.is_configured():
+                    logger.warning("Groq Whisper not configured, skipping audio transcription")
+                    return {"session_id": session_id, "ai_job_id": ai_job_id}
+                
+                # Initialize R2 client
+                r2_client = get_r2_client()
+                if not r2_client.is_configured:
+                    logger.error("R2 client not configured, cannot download audio files")
+                    return {"session_id": session_id, "ai_job_id": ai_job_id}
+                
+                transcriptions_created = 0
+                transcriptions_failed = 0
+                
+                # Process each audio file
+                for audio_file in audio_files:
                 temp_file_path = None
                 wav_file_path = None
                 is_pcm = False
@@ -313,16 +313,16 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
                             except Exception as e:
                                 logger.warning(f"Failed to delete temp file {path}: {e}")
             
-            # Commit all transcriptions
-            await db.commit()
-            
-            logger.info(
-                f"Audio transcription complete for session {session_id}: "
-                f"{transcriptions_created} created, {transcriptions_failed} failed"
-            )
-            
-            return {"session_id": session_id, "ai_job_id": ai_job_id}
-            
+                # Commit all transcriptions
+                await db.commit()
+                
+                logger.info(
+                    f"Audio transcription complete for session {session_id}: "
+                    f"{transcriptions_created} created, {transcriptions_failed} failed"
+                )
+                
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
+                
             except Exception as e:
                 logger.error(f"Error transcribing audio for session {session_id}: {str(e)}", exc_info=True)
                 # Don't fail the entire pipeline - return result anyway
