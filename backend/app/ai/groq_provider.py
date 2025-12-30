@@ -4,11 +4,18 @@ Uses Groq API for fast, low-cost speech-to-text conversion.
 Falls back to OpenAI Whisper if Groq fails.
 """
 import logging
+import time
 from typing import Optional
 from groq import Groq
 from openai import OpenAI
 
 from app.config import settings
+from app.utils.metrics import (
+    ai_provider_requests_total,
+    ai_provider_failures_total,
+    ai_provider_latency_seconds
+)
+from app.utils.logging import log_provider_request, log_provider_failure
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +80,9 @@ class GroqWhisperProvider:
             logger.info("Groq not configured, using OpenAI Whisper directly...")
             return self._transcribe_with_openai(audio_file_path, language, prompt)
         
+        start_time = time.time()
+        ai_provider_requests_total.labels(provider="groq", operation="transcribe").inc()
+        
         try:
             # Open audio file
             with open(audio_file_path, "rb") as audio_file:
@@ -94,11 +104,33 @@ class GroqWhisperProvider:
                 )
                 
                 text = transcription.text
-                logger.info(f"Groq transcription complete (length: {len(text)} chars)")
+                duration = time.time() - start_time
+                ai_provider_latency_seconds.labels(provider="groq", operation="transcribe").observe(duration)
+                
+                # Structured logging
+                log_provider_request(
+                    logger,
+                    provider="groq",
+                    operation="transcribe",
+                    duration_ms=duration * 1000
+                )
+                
                 return text
                 
         except Exception as e:
-            logger.error(f"Groq transcription API error: {e}")
+            duration = time.time() - start_time
+            ai_provider_failures_total.labels(provider="groq", operation="transcribe").inc()
+            ai_provider_latency_seconds.labels(provider="groq", operation="transcribe").observe(duration)
+            
+            # Structured logging
+            log_provider_failure(
+                logger,
+                provider="groq",
+                operation="transcribe",
+                error=str(e),
+                duration_ms=duration * 1000
+            )
+            
             # Fallback to OpenAI Whisper
             logger.info("Falling back to OpenAI Whisper for transcription...")
             return self._transcribe_with_openai(audio_file_path, language, prompt)

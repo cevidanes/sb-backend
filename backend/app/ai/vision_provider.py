@@ -4,10 +4,18 @@ Uses Groq API (llama-3.2-90b-vision-preview) as primary, falls back to OpenAI GP
 """
 import logging
 import base64
+import time
 from typing import List, Optional
 from openai import OpenAI
 from groq import Groq
 from app.config import settings
+from app.utils.metrics import (
+    ai_provider_requests_total,
+    ai_provider_failures_total,
+    ai_provider_latency_seconds,
+    ai_provider_tokens_total
+)
+from app.utils.logging import log_provider_request, log_provider_failure
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +118,10 @@ class VisionProvider:
         ]
         
         # Call Vision API (Groq primary, OpenAI fallback)
+        start_time = time.time()
+        provider_name = "groq" if self.groq_client else "openai"
+        ai_provider_requests_total.labels(provider=provider_name, operation="describe_image").inc()
+        
         try:
             if self.groq_client:
                 # Use Groq API
@@ -120,7 +132,32 @@ class VisionProvider:
                     temperature=0.3
                 )
                 description = response.choices[0].message.content
-                logger.info(f"Groq Vision API description from URL generated (model: {self.vision_model}, length: {len(description)} chars)")
+                duration = time.time() - start_time
+                ai_provider_latency_seconds.labels(provider="groq", operation="describe_image").observe(duration)
+                
+                # Extract token usage if available
+                if hasattr(response, 'usage') and response.usage:
+                    if hasattr(response.usage, 'prompt_tokens'):
+                        ai_provider_tokens_total.labels(
+                            provider="groq",
+                            operation="describe_image",
+                            token_type="prompt"
+                        ).inc(response.usage.prompt_tokens)
+                    if hasattr(response.usage, 'completion_tokens'):
+                        ai_provider_tokens_total.labels(
+                            provider="groq",
+                            operation="describe_image",
+                            token_type="completion"
+                        ).inc(response.usage.completion_tokens)
+                
+                # Structured logging
+                log_provider_request(
+                    logger,
+                    provider="groq",
+                    operation="describe_image",
+                    duration_ms=duration * 1000
+                )
+                
                 return description
             elif self.client:
                 # Use OpenAI API (fallback)
@@ -131,11 +168,49 @@ class VisionProvider:
                     temperature=0.3
                 )
                 description = response.choices[0].message.content
-                logger.info(f"OpenAI Vision API (fallback) description from URL generated (model: {self.vision_model}, length: {len(description)} chars)")
+                duration = time.time() - start_time
+                ai_provider_latency_seconds.labels(provider="openai", operation="describe_image").observe(duration)
+                
+                # Extract token usage if available
+                if hasattr(response, 'usage') and response.usage:
+                    if hasattr(response.usage, 'prompt_tokens'):
+                        ai_provider_tokens_total.labels(
+                            provider="openai",
+                            operation="describe_image",
+                            token_type="prompt"
+                        ).inc(response.usage.prompt_tokens)
+                    if hasattr(response.usage, 'completion_tokens'):
+                        ai_provider_tokens_total.labels(
+                            provider="openai",
+                            operation="describe_image",
+                            token_type="completion"
+                        ).inc(response.usage.completion_tokens)
+                
+                # Structured logging
+                log_provider_request(
+                    logger,
+                    provider="openai",
+                    operation="describe_image",
+                    duration_ms=duration * 1000
+                )
+                
                 return description
             else:
                 raise ValueError("No vision API client configured")
         except Exception as e:
+            duration = time.time() - start_time
+            ai_provider_failures_total.labels(provider=provider_name, operation="describe_image").inc()
+            ai_provider_latency_seconds.labels(provider=provider_name, operation="describe_image").observe(duration)
+            
+            # Structured logging
+            log_provider_failure(
+                logger,
+                provider=provider_name,
+                operation="describe_image",
+                error=str(e),
+                duration_ms=duration * 1000
+            )
+            
             # If Groq fails and OpenAI is available, try OpenAI as fallback
             if self.groq_client and self.openai_api_key:
                 logger.warning(f"Groq Vision API failed: {e}, falling back to OpenAI GPT-4 Vision")

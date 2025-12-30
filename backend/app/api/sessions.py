@@ -4,6 +4,7 @@ All endpoints require Firebase JWT authentication.
 """
 import asyncio
 import logging
+import time
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -24,6 +25,8 @@ from app.tasks.transcribe_audio import transcribe_audio_task
 from app.tasks.process_images import process_images_task
 from app.tasks.generate_summary import generate_summary_task
 from app.models.ai_job import AIJob, AIJobStatus
+from app.utils.metrics import sessions_created_total, sessions_finalized_total
+from app.utils.logging import log_session_created, log_session_finalized
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,7 @@ async def create_session(
     Create a new session for the authenticated user.
     Requires valid Firebase JWT token.
     """
+    start_time = time.time()
     try:
         session = await SessionService.create_session(
             db,
@@ -47,8 +51,33 @@ async def create_session(
             user_id=current_user.id,
             language=session_data.language
         )
+        
+        # Record metrics
+        sessions_created_total.inc()
+        
+        # Structured logging
+        duration_ms = (time.time() - start_time) * 1000
+        log_session_created(
+            logger,
+            session_id=str(session.id),
+            user_id=current_user.id,
+            duration_ms=duration_ms,
+            session_type=session_data.session_type
+        )
+        
         return SessionResponse.model_validate(session)
     except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(
+            f"Failed to create session: {str(e)}",
+            extra={
+                "event": "session_creation_failed",
+                "user_id": current_user.id,
+                "duration_ms": duration_ms,
+                "error": str(e)
+            },
+            exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create session: {str(e)}"
@@ -116,6 +145,7 @@ async def finalize_session(
     This endpoint never blocks waiting for AI processing.
     All AI work happens asynchronously in Celery worker.
     """
+    start_time = time.time()
     try:
         # Check if user has credits for AI processing
         has_credits = await CreditService.has_credits(db, current_user.id, amount=1)
@@ -146,6 +176,9 @@ async def finalize_session(
                     await db.commit()
                     await db.refresh(ai_job)
                     
+                    # Record metrics
+                    sessions_finalized_total.inc()
+                    
                     # Check if user has low credits (<= 5) and send notification
                     try:
                         current_balance = await CreditService.get_balance(db, current_user.id)
@@ -171,6 +204,17 @@ async def finalize_session(
                     )
                     pipeline.delay()
                     
+                    # Structured logging
+                    duration_ms = (time.time() - start_time) * 1000
+                    log_session_finalized(
+                        logger,
+                        session_id=session_id,
+                        user_id=current_user.id,
+                        job_id=str(ai_job.id),
+                        duration_ms=duration_ms,
+                        has_credits=True
+                    )
+                    
                     return SessionFinalizeResponse(
                         message="Session finalized. AI processing started.",
                         session_id=session_id,
@@ -179,6 +223,18 @@ async def finalize_session(
                 except Exception as e:
                     # Rollback all changes if any operation fails
                     await db.rollback()
+                    duration_ms = (time.time() - start_time) * 1000
+                    logger.error(
+                        f"Failed to finalize session: {str(e)}",
+                        extra={
+                            "event": "session_finalization_failed",
+                            "session_id": session_id,
+                            "user_id": current_user.id,
+                            "duration_ms": duration_ms,
+                            "error": str(e)
+                        },
+                        exc_info=True
+                    )
                     raise
             else:
                 # Debit failed (race condition - credits depleted)
@@ -187,6 +243,20 @@ async def finalize_session(
                     db, session_id, current_user.id, has_credits=False
                 )
                 await db.commit()
+                
+                # Record metrics
+                sessions_finalized_total.inc()
+                
+                # Structured logging
+                duration_ms = (time.time() - start_time) * 1000
+                log_session_finalized(
+                    logger,
+                    session_id=session_id,
+                    user_id=current_user.id,
+                    duration_ms=duration_ms,
+                    has_credits=False
+                )
+                
                 return SessionFinalizeResponse(
                     message="Session finalized without AI processing (insufficient credits). Session saved locally.",
                     session_id=session_id,
@@ -198,6 +268,19 @@ async def finalize_session(
                 db, session_id, current_user.id, has_credits=False
             )
             await db.commit()
+            
+            # Record metrics
+            sessions_finalized_total.inc()
+            
+            # Structured logging
+            duration_ms = (time.time() - start_time) * 1000
+            log_session_finalized(
+                logger,
+                session_id=session_id,
+                user_id=current_user.id,
+                duration_ms=duration_ms,
+                has_credits=False
+            )
             
             return SessionFinalizeResponse(
                 message="Session finalized without AI processing (no credits available). Session saved locally.",

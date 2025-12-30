@@ -17,6 +17,11 @@ from app.utils.text_chunker import chunk_text
 from app.repositories.embedding_repository import EmbeddingRepository
 from app.workers.celery_app import celery_app
 from app.services.fcm_service import FCMService
+from app.utils.metrics import (
+    ai_jobs_created_total,
+    ai_job_duration_seconds
+)
+from app.utils.logging import log_ai_job_started, log_ai_job_completed, log_ai_job_failed
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +55,21 @@ def process_session_task(self, session_id: str, ai_job_id: str):
     """
     import asyncio
     import threading
+    import time
+    
+    start_time = time.time()
+    job_type = "process_session"
+    
+    # Record job creation
+    ai_jobs_created_total.labels(job_type=job_type).inc()
+    
+    # Structured logging
+    log_ai_job_started(
+        logger,
+        job_id=ai_job_id,
+        session_id=session_id,
+        job_type=job_type
+    )
     
     # Run async code in sync context
     # Handle event loop properly - check if one already exists
@@ -75,12 +95,58 @@ def process_session_task(self, session_id: str, ai_job_id: str):
         thread.start()
         thread.join()
         
+        duration = time.time() - start_time
+        
         if exception:
+            # Record failure metrics
+            ai_job_duration_seconds.labels(job_type=job_type, status="failed").observe(duration)
+            log_ai_job_failed(
+                logger,
+                job_id=ai_job_id,
+                session_id=session_id,
+                duration_ms=duration * 1000,
+                error=str(exception),
+                job_type=job_type
+            )
             raise exception
+        
+        # Record success metrics
+        ai_job_duration_seconds.labels(job_type=job_type, status="completed").observe(duration)
+        log_ai_job_completed(
+            logger,
+            job_id=ai_job_id,
+            session_id=session_id,
+            duration_ms=duration * 1000,
+            job_type=job_type
+        )
+        
         return result
     except RuntimeError:
         # No running loop, safe to use asyncio.run()
-        asyncio.run(_process_session_async(session_id, ai_job_id))
+        try:
+            result = asyncio.run(_process_session_async(session_id, ai_job_id))
+            duration = time.time() - start_time
+            ai_job_duration_seconds.labels(job_type=job_type, status="completed").observe(duration)
+            log_ai_job_completed(
+                logger,
+                job_id=ai_job_id,
+                session_id=session_id,
+                duration_ms=duration * 1000,
+                job_type=job_type
+            )
+            return result
+        except Exception as e:
+            duration = time.time() - start_time
+            ai_job_duration_seconds.labels(job_type=job_type, status="failed").observe(duration)
+            log_ai_job_failed(
+                logger,
+                job_id=ai_job_id,
+                session_id=session_id,
+                duration_ms=duration * 1000,
+                error=str(e),
+                job_type=job_type
+            )
+            raise
 
 
 async def _process_session_async(session_id: str, ai_job_id: str):

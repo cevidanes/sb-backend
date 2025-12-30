@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     
     # Environment
     environment: str = "dev"
+    log_level: str = "INFO"  # Logging level: DEBUG, INFO, WARNING, ERROR
     
     # Firebase Authentication
     firebase_project_id: Optional[str] = None

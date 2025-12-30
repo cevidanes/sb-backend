@@ -198,6 +198,49 @@ backend/
 
 ## ⚙️ Configuração e Instalação
 
+### CI/CD Pipeline
+
+The backend uses GitHub Actions to build and push Docker images to GitHub Container Registry (GHCR).
+
+#### Workflow
+
+**Trigger**: Pushes to `main` branch
+
+**Actions**:
+1. Builds two Docker images:
+   - `ghcr.io/<org>/sb-api:latest` and `ghcr.io/<org>/sb-api:sha-<commit>`
+   - `ghcr.io/<org>/sb-worker:latest` and `ghcr.io/<org>/sb-worker:sha-<commit>`
+2. Uses Docker Buildx with layer caching (GitHub Actions cache)
+3. Pushes images to GHCR using `GITHUB_TOKEN` (automatic)
+
+#### Image Tags
+
+- `latest`: Always points to the latest build from `main` branch
+- `sha-<commit>`: Immutable tag for specific commit (e.g., `sha-abc123def`)
+
+#### Usage
+
+**Pull images**:
+```bash
+# Pull latest API image
+docker pull ghcr.io/<org>/sb-api:latest
+
+# Pull specific commit
+docker pull ghcr.io/<org>/sb-api:sha-abc123def
+
+# Pull latest Worker image
+docker pull ghcr.io/<org>/sb-worker:latest
+```
+
+**Authenticate** (if pulling private images):
+```bash
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+```
+
+**Workflow File**: `.github/workflows/backend-ci.yml`
+
+**Note**: Images are built in CI, not on the VPS. The VPS only pulls and runs pre-built images.
+
 ### Pré-requisitos
 
 - Docker e docker-compose
@@ -1115,6 +1158,143 @@ stripe-signature: <stripe_signature>
 2. Extrai `user_id` e `credits` do metadata
 3. Credita créditos ao usuário
 4. Retorna sucesso
+
+---
+
+## 📊 Observability
+
+### Metrics and Monitoring
+
+The observability stack includes Prometheus for metrics collection and Grafana for visualization.
+
+#### Services
+
+- **Prometheus**: Scrapes metrics from API, worker, and Redis exporter (port 9090)
+- **Grafana**: Visualization dashboard (port 3001)
+- **Redis Exporter**: Exposes Redis queue metrics (port 9121)
+
+#### Accessing Grafana
+
+1. Start all services:
+   ```bash
+   docker-compose up -d
+   ```
+
+2. Access Grafana:
+   - URL: `http://localhost:3001`
+   - Username: `admin`
+   - Password: Set via `GRAFANA_ADMIN_PASSWORD` environment variable (default: `admin`)
+
+3. Configure Prometheus data source:
+   - Go to Configuration → Data Sources → Add data source
+   - Select Prometheus
+   - URL: `http://prometheus:9090`
+   - Save & Test
+
+#### Metrics Endpoints
+
+- **FastAPI**: `http://localhost:8000/metrics`
+- **Celery Worker**: `http://localhost:9090/metrics` (exposed in worker container)
+- **Redis Exporter**: `http://localhost:9121/metrics`
+
+#### Available Metrics
+
+**FastAPI Metrics:**
+- `http_requests_total{method, path, status}` - Total HTTP requests
+- `http_request_duration_seconds{method, path}` - Request latency histogram
+- `sessions_created_total` - Total sessions created
+- `sessions_finalized_total` - Total sessions finalized
+- `errors_total{error_type}` - Total errors by type
+
+**Celery Worker Metrics:**
+- `ai_jobs_created_total{job_type}` - Total AI jobs created
+- `ai_jobs_processing{job_type}` - Currently processing jobs
+- `ai_jobs_completed_total{job_type, status}` - Completed jobs
+- `ai_jobs_failed_total{job_type}` - Failed jobs
+- `ai_job_duration_seconds{job_type, status}` - Job execution duration
+
+**AI Provider Metrics:**
+- `ai_provider_requests_total{provider, operation}` - Total provider requests
+- `ai_provider_failures_total{provider, operation}` - Provider failures
+- `ai_provider_latency_seconds{provider, operation}` - Provider latency
+- `ai_provider_tokens_total{provider, operation, token_type}` - Token usage
+
+**Redis Metrics:**
+- `redis_queue_length{queue}` - Queue backlog (from redis_exporter)
+
+#### Example Grafana Queries
+
+**Request Rate:**
+```
+rate(http_requests_total[5m])
+```
+
+**Error Rate:**
+```
+rate(errors_total[5m])
+```
+
+**Average Request Latency:**
+```
+rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])
+```
+
+**Active Jobs:**
+```
+sum(ai_jobs_processing)
+```
+
+**Provider Success Rate:**
+```
+rate(ai_provider_requests_total[5m]) - rate(ai_provider_failures_total[5m])
+```
+
+#### Structured Logging
+
+All services use structured JSON logging with mandatory fields:
+
+```json
+{
+  "timestamp": "2024-01-01T12:00:00Z",
+  "level": "INFO",
+  "service": "sb-api",
+  "event": "session_created",
+  "session_id": "uuid",
+  "user_id": "uuid",
+  "duration_ms": 123.45,
+  "message": "Session created: uuid"
+}
+```
+
+**Mandatory Fields:**
+- `service`: Service name (sb-api or sb-worker)
+- `event`: Event name (e.g., session_created, job_completed)
+- `timestamp`: ISO 8601 timestamp
+- `level`: Log level (DEBUG, INFO, WARNING, ERROR)
+- `message`: Log message
+
+**Optional Fields:**
+- `session_id`: Session ID (when applicable)
+- `job_id`: Job ID (when applicable)
+- `user_id`: User ID (when applicable)
+- `duration_ms`: Duration in milliseconds (when applicable)
+
+#### Log Retention
+
+- Prometheus metrics: 7 days (configured via `--storage.tsdb.retention.time=7d`)
+- Grafana dashboards: Stored locally in container volume
+- Application logs: Available via `docker logs` (no retention limit)
+
+#### Environment Variables
+
+```bash
+# Grafana
+GRAFANA_ADMIN_PASSWORD=your_password  # Default: admin
+GRAFANA_PORT=3001                    # Default: 3001
+
+# Prometheus
+PROMETHEUS_PORT=9090                 # Default: 9090
+```
 
 ---
 

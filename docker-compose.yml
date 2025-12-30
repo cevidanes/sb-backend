@@ -98,6 +98,7 @@ services:
       R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
       R2_SECRET_KEY: ${R2_SECRET_KEY:-}
       R2_REGION: ${R2_REGION:-auto}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
     depends_on:
       # postgres:
       #   condition: service_healthy
@@ -105,11 +106,63 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    ports:
+      - "9090:9090"  # Metrics endpoint
+    networks:
+      - sb-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sb-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
+      - worker
+      - redis-exporter
+    networks:
+      - sb-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sb-grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - sb-network
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: sb-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
     networks:
       - sb-network
 
 volumes:
   # postgres_data:  # Not needed - using external postgres
+  prometheus_data:
+  grafana_data:
 
 networks:
   sb-network:

@@ -19,6 +19,8 @@ from app.models.media_file import MediaFile, MediaType, MediaStatus
 from app.ai.groq_provider import GroqWhisperProvider
 from app.storage.r2_client import get_r2_client
 from app.workers.celery_app import celery_app
+from app.utils.metrics import ai_jobs_created_total, ai_job_duration_seconds
+from app.utils.logging import log_ai_job_started, log_ai_job_completed, log_ai_job_failed
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,21 @@ def transcribe_audio_task(self, session_id: str, ai_job_id: str):
     """
     import asyncio
     import threading
+    import time
+    
+    start_time = time.time()
+    job_type = "transcribe_audio"
+    
+    # Record job creation
+    ai_jobs_created_total.labels(job_type=job_type).inc()
+    
+    # Structured logging
+    log_ai_job_started(
+        logger,
+        job_id=ai_job_id,
+        session_id=session_id,
+        job_type=job_type
+    )
     
     # Run async code in sync context
     # Celery workers run in separate processes, so we can safely use asyncio.run
@@ -106,8 +123,30 @@ def transcribe_audio_task(self, session_id: str, ai_job_id: str):
         
         if loop is None:
             # No running loop, safe to use asyncio.run
-            result = asyncio.run(_transcribe_audio_async(session_id, ai_job_id))
-            return result or {"session_id": session_id, "ai_job_id": ai_job_id}
+            try:
+                result = asyncio.run(_transcribe_audio_async(session_id, ai_job_id))
+                duration = time.time() - start_time
+                ai_job_duration_seconds.labels(job_type=job_type, status="completed").observe(duration)
+                log_ai_job_completed(
+                    logger,
+                    job_id=ai_job_id,
+                    session_id=session_id,
+                    duration_ms=duration * 1000,
+                    job_type=job_type
+                )
+                return result or {"session_id": session_id, "ai_job_id": ai_job_id}
+            except Exception as e:
+                duration = time.time() - start_time
+                ai_job_duration_seconds.labels(job_type=job_type, status="failed").observe(duration)
+                log_ai_job_failed(
+                    logger,
+                    job_id=ai_job_id,
+                    session_id=session_id,
+                    duration_ms=duration * 1000,
+                    error=str(e),
+                    job_type=job_type
+                )
+                raise
         else:
             # Running loop exists, create new one in thread
             import threading
@@ -130,9 +169,29 @@ def transcribe_audio_task(self, session_id: str, ai_job_id: str):
             thread.start()
             thread.join()
             
+            duration = time.time() - start_time
+            
             if exception:
+                ai_job_duration_seconds.labels(job_type=job_type, status="failed").observe(duration)
+                log_ai_job_failed(
+                    logger,
+                    job_id=ai_job_id,
+                    session_id=session_id,
+                    duration_ms=duration * 1000,
+                    error=str(exception),
+                    job_type=job_type
+                )
                 logger.error(f"Error in transcribe_audio_task: {exception}", exc_info=True)
                 return {"session_id": session_id, "ai_job_id": ai_job_id}
+            
+            ai_job_duration_seconds.labels(job_type=job_type, status="completed").observe(duration)
+            log_ai_job_completed(
+                logger,
+                job_id=ai_job_id,
+                session_id=session_id,
+                duration_ms=duration * 1000,
+                job_type=job_type
+            )
             return result or {"session_id": session_id, "ai_job_id": ai_job_id}
     except Exception as e:
         logger.error(f"Error in transcribe_audio_task: {e}", exc_info=True)

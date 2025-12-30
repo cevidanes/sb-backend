@@ -16,6 +16,8 @@ from app.models.session_block import SessionBlock, BlockType
 from app.models.media_file import MediaFile, MediaType, MediaStatus
 from app.storage.r2_client import get_r2_client
 from app.workers.celery_app import celery_app
+from app.utils.metrics import ai_jobs_created_total, ai_job_duration_seconds
+from app.utils.logging import log_ai_job_started, log_ai_job_completed, log_ai_job_failed
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ def process_images_task(self, previous_result: dict):
     """
     import asyncio
     import threading
+    import time
     
     session_id = previous_result.get("session_id")
     ai_job_id = previous_result.get("ai_job_id")
@@ -69,6 +72,20 @@ def process_images_task(self, previous_result: dict):
     if not session_id:
         logger.error("No session_id in previous_result")
         return previous_result
+    
+    start_time = time.time()
+    job_type = "process_images"
+    
+    # Record job creation
+    ai_jobs_created_total.labels(job_type=job_type).inc()
+    
+    # Structured logging
+    log_ai_job_started(
+        logger,
+        job_id=ai_job_id,
+        session_id=session_id,
+        job_type=job_type
+    )
     
     # Run async code in sync context
     # Celery workers run in separate processes, so we can safely use asyncio.run
@@ -84,8 +101,30 @@ def process_images_task(self, previous_result: dict):
         
         if loop is None:
             # No running loop, safe to use asyncio.run
-            result = asyncio.run(_process_images_async(session_id, ai_job_id))
-            return result or {"session_id": session_id, "ai_job_id": ai_job_id}
+            try:
+                result = asyncio.run(_process_images_async(session_id, ai_job_id))
+                duration = time.time() - start_time
+                ai_job_duration_seconds.labels(job_type=job_type, status="completed").observe(duration)
+                log_ai_job_completed(
+                    logger,
+                    job_id=ai_job_id,
+                    session_id=session_id,
+                    duration_ms=duration * 1000,
+                    job_type=job_type
+                )
+                return result or {"session_id": session_id, "ai_job_id": ai_job_id}
+            except Exception as e:
+                duration = time.time() - start_time
+                ai_job_duration_seconds.labels(job_type=job_type, status="failed").observe(duration)
+                log_ai_job_failed(
+                    logger,
+                    job_id=ai_job_id,
+                    session_id=session_id,
+                    duration_ms=duration * 1000,
+                    error=str(e),
+                    job_type=job_type
+                )
+                raise
         else:
             # Running loop exists, create new one in thread
             import threading
@@ -108,9 +147,29 @@ def process_images_task(self, previous_result: dict):
             thread.start()
             thread.join()
             
+            duration = time.time() - start_time
+            
             if exception:
+                ai_job_duration_seconds.labels(job_type=job_type, status="failed").observe(duration)
+                log_ai_job_failed(
+                    logger,
+                    job_id=ai_job_id,
+                    session_id=session_id,
+                    duration_ms=duration * 1000,
+                    error=str(exception),
+                    job_type=job_type
+                )
                 logger.error(f"Error in process_images_task: {exception}", exc_info=True)
                 return {"session_id": session_id, "ai_job_id": ai_job_id}
+            
+            ai_job_duration_seconds.labels(job_type=job_type, status="completed").observe(duration)
+            log_ai_job_completed(
+                logger,
+                job_id=ai_job_id,
+                session_id=session_id,
+                duration_ms=duration * 1000,
+                job_type=job_type
+            )
             return result or {"session_id": session_id, "ai_job_id": ai_job_id}
     except Exception as e:
         logger.error(f"Error in process_images_task: {e}", exc_info=True)

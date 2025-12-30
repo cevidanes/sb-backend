@@ -19,6 +19,8 @@ from app.utils.text_chunker import chunk_text
 from app.repositories.embedding_repository import EmbeddingRepository
 from app.workers.celery_app import celery_app
 from app.services.fcm_service import FCMService
+from app.utils.metrics import ai_jobs_created_total, ai_job_duration_seconds
+from app.utils.logging import log_ai_job_started, log_ai_job_completed, log_ai_job_failed
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,7 @@ def generate_summary_task(self, previous_result: dict):
     """
     import asyncio
     import threading
+    import time
     
     session_id = previous_result.get("session_id")
     ai_job_id = previous_result.get("ai_job_id")
@@ -74,6 +77,20 @@ def generate_summary_task(self, previous_result: dict):
     if not session_id:
         logger.error("No session_id in previous_result")
         return previous_result
+    
+    start_time = time.time()
+    job_type = "generate_summary"
+    
+    # Record job creation
+    ai_jobs_created_total.labels(job_type=job_type).inc()
+    
+    # Structured logging
+    log_ai_job_started(
+        logger,
+        job_id=ai_job_id,
+        session_id=session_id,
+        job_type=job_type
+    )
     
     # Run async code in sync context
     # Celery workers run in separate processes, so we can safely use asyncio.run
@@ -92,8 +109,27 @@ def generate_summary_task(self, previous_result: dict):
             asyncio.set_event_loop(loop)
         
         result = loop.run_until_complete(_generate_summary_async(session_id, ai_job_id))
+        duration = time.time() - start_time
+        ai_job_duration_seconds.labels(job_type=job_type, status="completed").observe(duration)
+        log_ai_job_completed(
+            logger,
+            job_id=ai_job_id,
+            session_id=session_id,
+            duration_ms=duration * 1000,
+            job_type=job_type
+        )
         return result or {"session_id": session_id, "ai_job_id": ai_job_id}
     except Exception as e:
+        duration = time.time() - start_time
+        ai_job_duration_seconds.labels(job_type=job_type, status="failed").observe(duration)
+        log_ai_job_failed(
+            logger,
+            job_id=ai_job_id,
+            session_id=session_id,
+            duration_ms=duration * 1000,
+            error=str(e),
+            job_type=job_type
+        )
         logger.error(f"Error in generate_summary_task: {e}", exc_info=True)
         return {"session_id": session_id, "ai_job_id": ai_job_id}
     finally:

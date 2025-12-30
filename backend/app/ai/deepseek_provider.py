@@ -5,9 +5,17 @@ DeepSeek uses OpenAI-compatible API, so we can use OpenAI SDK.
 """
 from typing import List, Dict, Any
 import logging
+import time
 from openai import OpenAI
 from app.ai.base import LLMProvider
 from app.config import settings
+from app.utils.metrics import (
+    ai_provider_requests_total,
+    ai_provider_failures_total,
+    ai_provider_latency_seconds,
+    ai_provider_tokens_total
+)
+from app.utils.logging import log_provider_request, log_provider_failure
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +221,9 @@ Estruture o resumo assim:
 ## 📝 Detalhes Importantes
 [Nomes, datas, valores, ou informações específicas mencionadas]"""
         
+        start_time = time.time()
+        ai_provider_requests_total.labels(provider="deepseek", operation="summarize").inc()
+        
         try:
             # Call DeepSeek chat completion API with enriched summary prompt
             response = self.client.chat.completions.create(
@@ -232,11 +243,48 @@ Estruture o resumo assim:
             )
             
             summary = response.choices[0].message.content
-            logger.info(f"Generated DeepSeek enriched summary (length: {len(summary)})")
+            duration = time.time() - start_time
+            ai_provider_latency_seconds.labels(provider="deepseek", operation="summarize").observe(duration)
+            
+            # Extract token usage
+            if hasattr(response, 'usage') and response.usage:
+                if hasattr(response.usage, 'prompt_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="deepseek",
+                        operation="summarize",
+                        token_type="prompt"
+                    ).inc(response.usage.prompt_tokens)
+                if hasattr(response.usage, 'completion_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="deepseek",
+                        operation="summarize",
+                        token_type="completion"
+                    ).inc(response.usage.completion_tokens)
+            
+            # Structured logging
+            log_provider_request(
+                logger,
+                provider="deepseek",
+                operation="summarize",
+                duration_ms=duration * 1000
+            )
+            
             return summary
             
         except Exception as e:
-            logger.error(f"DeepSeek chat completion API error: {e}")
+            duration = time.time() - start_time
+            ai_provider_failures_total.labels(provider="deepseek", operation="summarize").inc()
+            ai_provider_latency_seconds.labels(provider="deepseek", operation="summarize").observe(duration)
+            
+            # Structured logging
+            log_provider_failure(
+                logger,
+                provider="deepseek",
+                operation="summarize",
+                error=str(e),
+                duration_ms=duration * 1000
+            )
+            
             raise Exception(f"Failed to generate DeepSeek summary: {str(e)}")
     
     def generate_title(self, text: str, language: str = "pt") -> str:
@@ -293,6 +341,9 @@ Regras:
 5. Seja específico, não genérico"""
             user_prompt = f"Crie um título curto para:\n\n{truncated_text}"
         
+        start_time = time.time()
+        ai_provider_requests_total.labels(provider="deepseek", operation="generate_title").inc()
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.chat_model,
@@ -317,10 +368,47 @@ Regras:
             if len(title) > 60:
                 title = title[:57] + "..."
             
-            logger.info(f"Generated DeepSeek title: {title}")
+            duration = time.time() - start_time
+            ai_provider_latency_seconds.labels(provider="deepseek", operation="generate_title").observe(duration)
+            
+            # Extract token usage
+            if hasattr(response, 'usage') and response.usage:
+                if hasattr(response.usage, 'prompt_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="deepseek",
+                        operation="generate_title",
+                        token_type="prompt"
+                    ).inc(response.usage.prompt_tokens)
+                if hasattr(response.usage, 'completion_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="deepseek",
+                        operation="generate_title",
+                        token_type="completion"
+                    ).inc(response.usage.completion_tokens)
+            
+            # Structured logging
+            log_provider_request(
+                logger,
+                provider="deepseek",
+                operation="generate_title",
+                duration_ms=duration * 1000
+            )
+            
             return title
             
         except Exception as e:
-            logger.error(f"DeepSeek title generation error: {e}")
+            duration = time.time() - start_time
+            ai_provider_failures_total.labels(provider="deepseek", operation="generate_title").inc()
+            ai_provider_latency_seconds.labels(provider="deepseek", operation="generate_title").observe(duration)
+            
+            # Structured logging
+            log_provider_failure(
+                logger,
+                provider="deepseek",
+                operation="generate_title",
+                error=str(e),
+                duration_ms=duration * 1000
+            )
+            
             raise Exception(f"Failed to generate title: {str(e)}")
 

@@ -5,9 +5,17 @@ Uses cheapest models: text-embedding-3-small and gpt-3.5-turbo.
 """
 from typing import List, Dict, Any
 import logging
+import time
 from openai import OpenAI
 from app.ai.base import LLMProvider
 from app.config import settings
+from app.utils.metrics import (
+    ai_provider_requests_total,
+    ai_provider_failures_total,
+    ai_provider_latency_seconds,
+    ai_provider_tokens_total
+)
+from app.utils.logging import log_provider_request, log_provider_failure
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +66,9 @@ class OpenAIProvider(LLMProvider):
         if not self.is_configured() or not self.client:
             raise ValueError("OpenAI API key not configured")
         
+        start_time = time.time()
+        ai_provider_requests_total.labels(provider="openai", operation="embed").inc()
+        
         try:
             # Call OpenAI embeddings API
             # Note: dimensions parameter not needed, model default is 1536
@@ -67,11 +78,42 @@ class OpenAIProvider(LLMProvider):
             )
             
             embedding = response.data[0].embedding
-            logger.debug(f"Generated OpenAI embedding for text (length: {len(text)})")
+            duration = time.time() - start_time
+            ai_provider_latency_seconds.labels(provider="openai", operation="embed").observe(duration)
+            
+            # Extract token usage if available
+            if hasattr(response, 'usage') and response.usage:
+                if hasattr(response.usage, 'total_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="openai",
+                        operation="embed",
+                        token_type="total"
+                    ).inc(response.usage.total_tokens)
+            
+            # Structured logging
+            log_provider_request(
+                logger,
+                provider="openai",
+                operation="embed",
+                duration_ms=duration * 1000
+            )
+            
             return embedding
             
         except Exception as e:
-            logger.error(f"OpenAI embedding API error: {e}")
+            duration = time.time() - start_time
+            ai_provider_failures_total.labels(provider="openai", operation="embed").inc()
+            ai_provider_latency_seconds.labels(provider="openai", operation="embed").observe(duration)
+            
+            # Structured logging
+            log_provider_failure(
+                logger,
+                provider="openai",
+                operation="embed",
+                error=str(e),
+                duration_ms=duration * 1000
+            )
+            
             raise Exception(f"Failed to generate OpenAI embedding: {str(e)}")
     
     def summarize(self, blocks: List[Dict[str, Any]], language: str = "pt") -> str:
@@ -218,6 +260,9 @@ Estruture o resumo assim:
 ## 📝 Detalhes Importantes
 [Nomes, datas, valores, ou informações específicas mencionadas]"""
         
+        start_time = time.time()
+        ai_provider_requests_total.labels(provider="openai", operation="summarize").inc()
+        
         try:
             # Call OpenAI chat completion API with enriched summary prompt
             response = self.client.chat.completions.create(
@@ -237,11 +282,48 @@ Estruture o resumo assim:
             )
             
             summary = response.choices[0].message.content
-            logger.info(f"Generated OpenAI enriched summary (length: {len(summary)})")
+            duration = time.time() - start_time
+            ai_provider_latency_seconds.labels(provider="openai", operation="summarize").observe(duration)
+            
+            # Extract token usage
+            if hasattr(response, 'usage') and response.usage:
+                if hasattr(response.usage, 'prompt_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="openai",
+                        operation="summarize",
+                        token_type="prompt"
+                    ).inc(response.usage.prompt_tokens)
+                if hasattr(response.usage, 'completion_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="openai",
+                        operation="summarize",
+                        token_type="completion"
+                    ).inc(response.usage.completion_tokens)
+            
+            # Structured logging
+            log_provider_request(
+                logger,
+                provider="openai",
+                operation="summarize",
+                duration_ms=duration * 1000
+            )
+            
             return summary
             
         except Exception as e:
-            logger.error(f"OpenAI chat completion API error: {e}")
+            duration = time.time() - start_time
+            ai_provider_failures_total.labels(provider="openai", operation="summarize").inc()
+            ai_provider_latency_seconds.labels(provider="openai", operation="summarize").observe(duration)
+            
+            # Structured logging
+            log_provider_failure(
+                logger,
+                provider="openai",
+                operation="summarize",
+                error=str(e),
+                duration_ms=duration * 1000
+            )
+            
             raise Exception(f"Failed to generate OpenAI summary: {str(e)}")
     
     def generate_title(self, text: str, language: str = "pt") -> str:
@@ -298,6 +380,9 @@ Regras:
 5. Seja específico, não genérico"""
             user_prompt = f"Crie um título curto para:\n\n{truncated_text}"
         
+        start_time = time.time()
+        ai_provider_requests_total.labels(provider="openai", operation="generate_title").inc()
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.chat_model,
@@ -322,10 +407,47 @@ Regras:
             if len(title) > 60:
                 title = title[:57] + "..."
             
-            logger.info(f"Generated OpenAI title: {title}")
+            duration = time.time() - start_time
+            ai_provider_latency_seconds.labels(provider="openai", operation="generate_title").observe(duration)
+            
+            # Extract token usage
+            if hasattr(response, 'usage') and response.usage:
+                if hasattr(response.usage, 'prompt_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="openai",
+                        operation="generate_title",
+                        token_type="prompt"
+                    ).inc(response.usage.prompt_tokens)
+                if hasattr(response.usage, 'completion_tokens'):
+                    ai_provider_tokens_total.labels(
+                        provider="openai",
+                        operation="generate_title",
+                        token_type="completion"
+                    ).inc(response.usage.completion_tokens)
+            
+            # Structured logging
+            log_provider_request(
+                logger,
+                provider="openai",
+                operation="generate_title",
+                duration_ms=duration * 1000
+            )
+            
             return title
             
         except Exception as e:
-            logger.error(f"OpenAI title generation error: {e}")
+            duration = time.time() - start_time
+            ai_provider_failures_total.labels(provider="openai", operation="generate_title").inc()
+            ai_provider_latency_seconds.labels(provider="openai", operation="generate_title").observe(duration)
+            
+            # Structured logging
+            log_provider_failure(
+                logger,
+                provider="openai",
+                operation="generate_title",
+                error=str(e),
+                duration_ms=duration * 1000
+            )
+            
             raise Exception(f"Failed to generate title: {str(e)}")
 
