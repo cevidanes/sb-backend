@@ -5,15 +5,21 @@ global:
     monitor: 'secondbrain'
 
 scrape_configs:
-  - job_name: 'sb-api'
+  - job_name: 'prometheus'
     static_configs:
-      - targets: ['sb-api:8000']
+      - targets: ['localhost:9090']
+
+  - job_name: 'sb-api'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['api:8000']
         labels:
           service: 'sb-api'
 
   - job_name: 'sb-worker'
+    metrics_path: '/metrics'
     static_configs:
-      - targets: ['sb-worker:9090']
+      - targets: ['worker:9090']
         labels:
           service: 'sb-worker'
 
