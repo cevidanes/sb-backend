@@ -176,7 +176,6 @@ async def _process_images_async(session_id: str, ai_job_id: str):
     )
     try:
         async with WorkerSessionLocal() as db:
-        try:
             # Start with a clean transaction state
             await db.rollback()
             
