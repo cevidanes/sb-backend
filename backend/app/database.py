@@ -78,7 +78,24 @@ async def init_db():
     
     # Enable pgvector extension
     async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Check if extension exists before creating it to avoid UniqueViolationError
+        # Some PostgreSQL versions throw an error even with IF NOT EXISTS
+        result = await conn.execute(text("""
+            SELECT EXISTS(
+                SELECT 1 FROM pg_extension WHERE extname = 'vector'
+            )
+        """))
+        extension_exists = result.scalar()
+        
+        if not extension_exists:
+            try:
+                await conn.execute(text("CREATE EXTENSION vector"))
+            except Exception as e:
+                # If extension creation fails (e.g., already exists from another connection),
+                # log but don't fail startup
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Could not create vector extension (may already exist): {e}")
         
         # #region agent log
         try:
