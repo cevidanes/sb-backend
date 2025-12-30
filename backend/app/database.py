@@ -77,26 +77,37 @@ async def init_db():
     # #endregion agent log
     
     # Enable pgvector extension
+    # Use a separate connection for extension creation to avoid transaction issues
+    try:
+        async with engine.connect() as ext_conn:
+            # Check if extension exists before creating it to avoid UniqueViolationError
+            # Some PostgreSQL versions throw an error even with IF NOT EXISTS
+            result = await ext_conn.execute(text("""
+                SELECT EXISTS(
+                    SELECT 1 FROM pg_extension WHERE extname = 'vector'
+                )
+            """))
+            extension_exists = result.scalar()
+            
+            if not extension_exists:
+                try:
+                    # Extension creation must be in autocommit mode
+                    await ext_conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                    await ext_conn.commit()
+                except Exception as e:
+                    # If extension creation fails (e.g., already exists from another connection),
+                    # log but don't fail startup
+                    await ext_conn.rollback()
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Could not create vector extension (may already exist): {e}")
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error checking/creating vector extension: {e}")
+    
+    # Now use begin() for the rest of the initialization
     async with engine.begin() as conn:
-        # Check if extension exists before creating it to avoid UniqueViolationError
-        # Some PostgreSQL versions throw an error even with IF NOT EXISTS
-        result = await conn.execute(text("""
-            SELECT EXISTS(
-                SELECT 1 FROM pg_extension WHERE extname = 'vector'
-            )
-        """))
-        extension_exists = result.scalar()
-        
-        if not extension_exists:
-            try:
-                await conn.execute(text("CREATE EXTENSION vector"))
-            except Exception as e:
-                # If extension creation fails (e.g., already exists from another connection),
-                # log but don't fail startup
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Could not create vector extension (may already exist): {e}")
-        
         # #region agent log
         try:
             # Check if sessionstatus enum exists and what values it has
