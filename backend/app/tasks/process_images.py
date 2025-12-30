@@ -320,10 +320,10 @@ async def _process_images_async(session_id: str, ai_job_id: str):
             
             return {"session_id": session_id, "ai_job_id": ai_job_id}
             
-        except Exception as e:
-            logger.error(f"Error processing images for session {session_id}: {str(e)}", exc_info=True)
-            # Don't fail the entire pipeline - return result anyway
-            return {"session_id": session_id, "ai_job_id": ai_job_id}
+    except Exception as e:
+        logger.error(f"Error processing images for session {session_id}: {str(e)}", exc_info=True)
+        # Don't fail the entire pipeline - return result anyway
+        return {"session_id": session_id, "ai_job_id": ai_job_id}
     finally:
         # Close engine to clean up connections
         await engine.dispose()
