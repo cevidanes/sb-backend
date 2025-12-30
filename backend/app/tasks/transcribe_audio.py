@@ -66,18 +66,8 @@ def convert_pcm_to_wav(pcm_file_path: str, wav_file_path: str, sample_rate: int 
         return False
 
 
-# Create async engine for worker (separate from API)
-# Create engine and sessionmaker at module level - they are thread-safe
-worker_engine = create_async_engine(
-    settings.database_url,
-    echo=False,
-    pool_pre_ping=True,
-)
-WorkerSessionLocal = async_sessionmaker(
-    worker_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+# Don't create engine at module level - create it inside async function
+# to avoid event loop conflicts with Celery prefork workers
 
 
 @celery_app.task(name="transcribe_audio", bind=True, max_retries=3)
@@ -153,8 +143,21 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
     """
     Async implementation of audio transcription.
     """
-    async with WorkerSessionLocal() as db:
-        try:
+    # Create engine and sessionmaker within the current event loop
+    # This ensures the engine is tied to the correct event loop
+    engine = create_async_engine(
+        settings.database_url,
+        echo=False,
+        pool_pre_ping=True,
+    )
+    WorkerSessionLocal = async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    try:
+        async with WorkerSessionLocal() as db:
+            try:
             # Fetch session
             result = await db.execute(
                 select(Session).where(Session.id == session_id)
@@ -320,8 +323,11 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
             
             return {"session_id": session_id, "ai_job_id": ai_job_id}
             
-        except Exception as e:
-            logger.error(f"Error transcribing audio for session {session_id}: {str(e)}", exc_info=True)
-            # Don't fail the entire pipeline - return result anyway
-            return {"session_id": session_id, "ai_job_id": ai_job_id}
+            except Exception as e:
+                logger.error(f"Error transcribing audio for session {session_id}: {str(e)}", exc_info=True)
+                # Don't fail the entire pipeline - return result anyway
+                return {"session_id": session_id, "ai_job_id": ai_job_id}
+    finally:
+        # Close engine to clean up connections
+        await engine.dispose()
 
