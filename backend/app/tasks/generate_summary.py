@@ -24,26 +24,8 @@ from app.utils.logging import log_ai_job_started, log_ai_job_completed, log_ai_j
 
 logger = logging.getLogger(__name__)
 
-# Create worker engine and sessionmaker (separate to avoid event loop conflicts)
-worker_engine = None
-WorkerSessionLocal = None
-
-def get_worker_session_local():
-    """Get or create worker session local, creating a new engine if needed."""
-    global worker_engine, WorkerSessionLocal
-    if worker_engine is None:
-        worker_engine = create_async_engine(
-            settings.database_url,
-            echo=False,
-            pool_pre_ping=True,
-        )
-    if WorkerSessionLocal is None:
-        WorkerSessionLocal = async_sessionmaker(
-            worker_engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-    return WorkerSessionLocal
+# Don't create engine at module level - create it inside async function
+# to avoid event loop conflicts with Celery thread pool workers
 
 
 @celery_app.task(name="generate_summary", bind=True, max_retries=3)
