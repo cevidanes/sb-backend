@@ -106,69 +106,78 @@ async def init_db():
         logger = logging.getLogger(__name__)
         logger.warning(f"Error checking/creating vector extension: {e}")
     
-    # Now use begin() for the rest of the initialization
-    async with engine.begin() as conn:
-        # #region agent log
-        try:
-            # Check if sessionstatus enum exists and what values it has
-            result = await conn.execute(text("""
-                SELECT enumlabel 
-                FROM pg_enum 
-                WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'sessionstatus')
-                ORDER BY enumsortorder
-            """))
-            enum_values = [row[0] for row in result.fetchall()]
-            _log_debug(
-                "database.py:75",
-                "Database enum values at startup",
-                {"enum_values": enum_values, "enum_exists": len(enum_values) > 0},
-                "G"
-            )
-            
-            # If enum doesn't exist or doesn't have 'open', try to add it
-            if 'open' not in enum_values:
+    # Handle enum modifications in a separate connection to avoid transaction issues
+    try:
+        async with engine.connect() as enum_conn:
+            try:
+                # Check if sessionstatus enum exists and what values it has
+                result = await enum_conn.execute(text("""
+                    SELECT enumlabel 
+                    FROM pg_enum 
+                    WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'sessionstatus')
+                    ORDER BY enumsortorder
+                """))
+                enum_values = [row[0] for row in result.fetchall()]
                 _log_debug(
-                    "database.py:83",
-                    "Missing 'open' value, attempting to add",
-                    {"current_values": enum_values},
+                    "database.py:75",
+                    "Database enum values at startup",
+                    {"enum_values": enum_values, "enum_exists": len(enum_values) > 0},
                     "G"
                 )
-                try:
-                    # PostgreSQL doesn't support IF NOT EXISTS with ADD VALUE
-                    # So we wrap it in a DO block that checks first
-                    await conn.execute(text("""
-                        DO $$
-                        BEGIN
-                            IF NOT EXISTS (
-                                SELECT 1 FROM pg_enum 
-                                WHERE enumlabel = 'open' 
-                                AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'sessionstatus')
-                            ) THEN
-                                ALTER TYPE sessionstatus ADD VALUE 'open';
-                            END IF;
-                        END $$;
-                    """))
+                
+                # If enum doesn't exist or doesn't have 'open', try to add it
+                if 'open' not in enum_values:
                     _log_debug(
-                        "database.py:100",
-                        "Successfully added 'open' to enum",
-                        {},
+                        "database.py:83",
+                        "Missing 'open' value, attempting to add",
+                        {"current_values": enum_values},
                         "G"
                     )
-                except Exception as e:
-                    _log_debug(
-                        "database.py:106",
-                        "Failed to add 'open' to enum",
-                        {"error": str(e), "error_type": type(e).__name__},
-                        "G"
-                    )
-        except Exception as e:
-            _log_debug(
-                "database.py:101",
-                "Error checking enum values",
-                {"error": str(e), "error_type": type(e).__name__},
-                "G"
-            )
-        # #endregion agent log
-        
+                    try:
+                        # PostgreSQL doesn't support IF NOT EXISTS with ADD VALUE
+                        # So we wrap it in a DO block that checks first
+                        await enum_conn.execute(text("""
+                            DO $$
+                            BEGIN
+                                IF NOT EXISTS (
+                                    SELECT 1 FROM pg_enum 
+                                    WHERE enumlabel = 'open' 
+                                    AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'sessionstatus')
+                                ) THEN
+                                    ALTER TYPE sessionstatus ADD VALUE 'open';
+                                END IF;
+                            END $$;
+                        """))
+                        await enum_conn.commit()
+                        _log_debug(
+                            "database.py:100",
+                            "Successfully added 'open' to enum",
+                            {},
+                            "G"
+                        )
+                    except Exception as e:
+                        await enum_conn.rollback()
+                        _log_debug(
+                            "database.py:106",
+                            "Failed to add 'open' to enum",
+                            {"error": str(e), "error_type": type(e).__name__},
+                            "G"
+                        )
+            except Exception as e:
+                await enum_conn.rollback()
+                _log_debug(
+                    "database.py:101",
+                    "Error checking enum values",
+                    {"error": str(e), "error_type": type(e).__name__},
+                    "G"
+                )
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error handling enum modifications: {e}")
+    # #endregion agent log
+    
+    # Now use begin() for table creation - this should be safe now
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
