@@ -61,7 +61,7 @@ class DeepSeekProvider(LLMProvider):
             "and configuring OPENAI_API_KEY."
         )
     
-    def summarize(self, blocks: List[Dict[str, Any]]) -> str:
+    def summarize(self, blocks: List[Dict[str, Any]], language: str = "pt") -> str:
         """
         Generate enriched summary using DeepSeek chat completion.
         
@@ -73,6 +73,7 @@ class DeepSeekProvider(LLMProvider):
         
         Args:
             blocks: List of block dictionaries with text_content
+            language: Language code (e.g., 'pt', 'en', 'es') for the output
             
         Returns:
             Enriched summary string in markdown format
@@ -103,14 +104,83 @@ class DeepSeekProvider(LLMProvider):
             combined_text = combined_text[:max_chars] + "... [truncated]"
             logger.warning(f"Text truncated to {max_chars} characters for summary")
         
-        try:
-            # Call DeepSeek chat completion API with enriched summary prompt
-            response = self.client.chat.completions.create(
-                model=self.chat_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """Você é um assistente especializado em criar resumos enriquecidos e estruturados de notas de voz e transcrições.
+        # Map language code to language name for prompts
+        language_map = {
+            "pt": "português brasileiro",
+            "en": "English",
+            "es": "español",
+        }
+        language_name = language_map.get(language[:2].lower(), "português brasileiro")
+        
+        # Build prompts based on language
+        if language[:2].lower() == "en":
+            system_prompt = """You are an assistant specialized in creating enriched and structured summaries of voice notes and transcriptions.
+
+Your goal is to transform raw text into a useful and organized summary.
+
+Rules:
+1. Always respond in English
+2. Use markdown for formatting
+3. Be concise but informative
+4. Extract insights and key points
+5. Identify actions or tasks mentioned
+6. Highlight names, dates, and important values"""
+            user_prompt = f"""Create an enriched summary of the following content:
+
+---
+{combined_text}
+---
+
+Structure the summary like this:
+
+## 📌 Summary
+[2-3 sentences summarizing the main content]
+
+## 💡 Key Points
+- [point 1]
+- [point 2]
+- [etc...]
+
+## ✅ Actions/Tasks
+[List tasks or actions mentioned, or write "No actions identified"]
+
+## 📝 Important Details
+[Names, dates, values, or specific information mentioned]"""
+        elif language[:2].lower() == "es":
+            system_prompt = """Eres un asistente especializado en crear resúmenes enriquecidos y estructurados de notas de voz y transcripciones.
+
+Tu objetivo es transformar texto bruto en un resumen útil y organizado.
+
+Reglas:
+1. Responde SIEMPRE en español
+2. Usa markdown para formatear
+3. Sé conciso pero informativo
+4. Extrae insights y puntos clave
+5. Identifica acciones o tareas mencionadas
+6. Destaca nombres, fechas y valores importantes"""
+            user_prompt = f"""Crea un resumen enriquecido del siguiente contenido:
+
+---
+{combined_text}
+---
+
+Estructura el resumen así:
+
+## 📌 Resumen
+[2-3 frases resumiendo el contenido principal]
+
+## 💡 Puntos Clave
+- [punto 1]
+- [punto 2]
+- [etc...]
+
+## ✅ Acciones/Tareas
+[Lista tareas o acciones mencionadas, o escribe "Ninguna acción identificada"]
+
+## 📝 Detalles Importantes
+[Nombres, fechas, valores, o información específica mencionada]"""
+        else:  # Default to Portuguese
+            system_prompt = """Você é um assistente especializado em criar resumos enriquecidos e estruturados de notas de voz e transcrições.
 
 Seu objetivo é transformar texto bruto em um resumo útil e organizado.
 
@@ -121,10 +191,7 @@ Regras:
 4. Extraia insights e pontos-chave
 5. Identifique ações ou tarefas mencionadas
 6. Destaque nomes, datas e valores importantes"""
-                    },
-                    {
-                        "role": "user",
-                        "content": f"""Crie um resumo enriquecido do seguinte conteúdo:
+            user_prompt = f"""Crie um resumo enriquecido do seguinte conteúdo:
 
 ---
 {combined_text}
@@ -145,6 +212,19 @@ Estruture o resumo assim:
 
 ## 📝 Detalhes Importantes
 [Nomes, datas, valores, ou informações específicas mencionadas]"""
+        
+        try:
+            # Call DeepSeek chat completion API with enriched summary prompt
+            response = self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt
                     }
                 ],
                 temperature=0.3,
@@ -159,12 +239,13 @@ Estruture o resumo assim:
             logger.error(f"DeepSeek chat completion API error: {e}")
             raise Exception(f"Failed to generate DeepSeek summary: {str(e)}")
     
-    def generate_title(self, text: str) -> str:
+    def generate_title(self, text: str, language: str = "pt") -> str:
         """
         Generate a concise, descriptive title for the content.
         
         Args:
             text: The content to generate a title for
+            language: Language code (e.g., 'pt', 'en', 'es') for the output
             
         Returns:
             A short, descriptive title (max 60 chars)
@@ -180,13 +261,29 @@ Estruture o resumo assim:
         max_chars = 2000
         truncated_text = text[:max_chars] if len(text) > max_chars else text
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.chat_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """Você gera títulos curtos e descritivos para notas de voz.
+        # Build prompts based on language
+        if language[:2].lower() == "en":
+            system_prompt = """You generate short, descriptive titles for voice notes.
+
+Rules:
+1. Maximum 60 characters
+2. English
+3. No quotes or final punctuation
+4. Capture the essence of the content
+5. Be specific, not generic"""
+            user_prompt = f"Create a short title for:\n\n{truncated_text}"
+        elif language[:2].lower() == "es":
+            system_prompt = """Generas títulos cortos y descriptivos para notas de voz.
+
+Reglas:
+1. Máximo 60 caracteres
+2. Español
+3. Sin comillas o puntuación final
+4. Captura la esencia del contenido
+5. Sé específico, no genérico"""
+            user_prompt = f"Crea un título corto para:\n\n{truncated_text}"
+        else:  # Default to Portuguese
+            system_prompt = """Você gera títulos curtos e descritivos para notas de voz.
 
 Regras:
 1. Máximo 60 caracteres
@@ -194,10 +291,19 @@ Regras:
 3. Sem aspas ou pontuação final
 4. Capture a essência do conteúdo
 5. Seja específico, não genérico"""
+            user_prompt = f"Crie um título curto para:\n\n{truncated_text}"
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt
                     },
                     {
                         "role": "user",
-                        "content": f"Crie um título curto para:\n\n{truncated_text}"
+                        "content": user_prompt
                     }
                 ],
                 temperature=0.5,

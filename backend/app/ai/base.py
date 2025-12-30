@@ -36,12 +36,13 @@ class LLMProvider(ABC):
         pass
     
     @abstractmethod
-    def summarize(self, blocks: List[dict]) -> str:
+    def summarize(self, blocks: List[dict], language: str = "pt") -> str:
         """
         Generate summary from session blocks.
         
         Args:
             blocks: List of block dictionaries with text_content
+            language: Language code (e.g., 'pt', 'en', 'es') for the output
             
         Returns:
             Summary string
@@ -52,12 +53,13 @@ class LLMProvider(ABC):
         pass
     
     @abstractmethod
-    def generate_title(self, text: str) -> str:
+    def generate_title(self, text: str, language: str = "pt") -> str:
         """
         Generate a concise title for the content.
         
         Args:
             text: Input text to generate title for
+            language: Language code (e.g., 'pt', 'en', 'es') for the output
             
         Returns:
             Short, descriptive title (max 60 chars)

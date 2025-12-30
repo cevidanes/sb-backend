@@ -138,6 +138,11 @@ async def _process_images_async(session_id: str, ai_job_id: str):
                 logger.error(f"Session {session_id} not found")
                 return {"session_id": session_id, "ai_job_id": ai_job_id}
             
+            # Get language from session, default to "pt" if not set
+            session_language = session.language if session.language else "pt"
+            # Extract first 2 characters as language code (e.g., "pt_BR" -> "pt", "en_US" -> "en")
+            language_code = session_language[:2].lower() if len(session_language) >= 2 else "pt"
+            
             # Fetch image MediaFiles for this session
             result = await db.execute(
                 select(MediaFile).where(
@@ -191,20 +196,20 @@ async def _process_images_async(session_id: str, ai_job_id: str):
                         try:
                             image_description = vision_provider.describe_image_from_url(
                                 image_url,
-                                language="pt"
+                                language=language_code
                             )
                         except Exception as url_error:
                             logger.warning(f"Failed to analyze image via URL, trying local file: {url_error}")
                             # Fallback to local file
                             image_description = vision_provider.describe_image(
                                 temp_file_path,
-                                language="pt"
+                                language=language_code
                             )
                     else:
                         # Use local file with base64 encoding
                         image_description = vision_provider.describe_image(
                             temp_file_path,
-                            language="pt"
+                            language=language_code
                         )
                     
                     # Create SessionBlock for image description

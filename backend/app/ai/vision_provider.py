@@ -74,6 +74,21 @@ class VisionProvider:
         if not self.is_configured():
             raise ValueError("Vision API key not configured (Groq or OpenAI)")
         
+        # Build prompt based on language
+        language_map = {
+            "pt": "português brasileiro",
+            "en": "English",
+            "es": "español",
+        }
+        language_name = language_map.get(language[:2].lower(), "português brasileiro")
+        
+        if language[:2].lower() == "en":
+            prompt_text = "Describe this image in detail in English. Include objects, people, visible text, context, and any relevant information."
+        elif language[:2].lower() == "es":
+            prompt_text = "Describe esta imagen en detalle en español. Incluye objetos, personas, texto visible, contexto y cualquier información relevante."
+        else:  # Default to Portuguese
+            prompt_text = "Descreva esta imagem em detalhes em português brasileiro. Inclua objetos, pessoas, texto visível, contexto e qualquer informação relevante."
+        
         # Prepare vision message
         messages = [
             {
@@ -81,8 +96,7 @@ class VisionProvider:
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Descreva esta imagem em detalhes em português brasileiro. "
-                               f"Inclua objetos, pessoas, texto visível, contexto e qualquer informação relevante."
+                        "text": prompt_text
                     },
                     {
                         "type": "image_url",
@@ -172,6 +186,21 @@ class VisionProvider:
             # Determine MIME type from file extension
             mime_type = self._get_mime_type(image_path)
             
+            # Build prompt based on language
+            language_map = {
+                "pt": "português brasileiro",
+                "en": "English",
+                "es": "español",
+            }
+            language_name = language_map.get(language[:2].lower(), "português brasileiro")
+            
+            if language[:2].lower() == "en":
+                prompt_text = "Describe this image in detail in English. Include objects, people, visible text, context, and any relevant information."
+            elif language[:2].lower() == "es":
+                prompt_text = "Describe esta imagen en detalle en español. Incluye objetos, personas, texto visible, contexto y cualquier información relevante."
+            else:  # Default to Portuguese
+                prompt_text = "Descreva esta imagem em detalhes em português brasileiro. Inclua objetos, pessoas, texto visível, contexto e qualquer informação relevante."
+            
             # Prepare vision message
             messages = [
                 {
@@ -179,8 +208,7 @@ class VisionProvider:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Descreva esta imagem em detalhes em português brasileiro. "
-                                   f"Inclua objetos, pessoas, texto visível, contexto e qualquer informação relevante."
+                            "text": prompt_text
                         },
                         {
                             "type": "image_url",
@@ -269,6 +297,21 @@ class VisionProvider:
             # Encode image bytes to base64
             image_base64 = base64.b64encode(image_bytes).decode('utf-8')
             
+            # Build prompt based on language
+            language_map = {
+                "pt": "português brasileiro",
+                "en": "English",
+                "es": "español",
+            }
+            language_name = language_map.get(language[:2].lower(), "português brasileiro")
+            
+            if language[:2].lower() == "en":
+                prompt_text = "Describe this image in detail in English. Include objects, people, visible text, context, and any relevant information."
+            elif language[:2].lower() == "es":
+                prompt_text = "Describe esta imagen en detalle en español. Incluye objetos, personas, texto visible, contexto y cualquier información relevante."
+            else:  # Default to Portuguese
+                prompt_text = "Descreva esta imagem em detalhes em português brasileiro. Inclua objetos, pessoas, texto visível, contexto e qualquer informação relevante."
+            
             # Prepare vision message
             messages = [
                 {
@@ -276,8 +319,7 @@ class VisionProvider:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Descreva esta imagem em detalhes em português brasileiro. "
-                                   f"Inclua objetos, pessoas, texto visível, contexto e qualquer informação relevante."
+                            "text": prompt_text
                         },
                         {
                             "type": "image_url",

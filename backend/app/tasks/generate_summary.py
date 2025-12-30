@@ -274,26 +274,43 @@ async def _generate_summary_async(session_id: str, ai_job_id: str):
                         "source": _get_block_source(block.block_type)
                     })
             
+            # Get language from session, default to "pt" if not set
+            session_language = session.language if session.language else "pt"
+            # Extract first 2 characters as language code (e.g., "pt_BR" -> "pt", "en_US" -> "en")
+            language_code = session_language[:2].lower() if len(session_language) >= 2 else "pt"
+            
             # Step 2a: Generate enriched summary
             try:
-                summary = provider.summarize(block_dicts)
+                summary = provider.summarize(block_dicts, language=language_code)
                 logger.info(f"Generated summary for session {session_id}: {summary[:100]}...")
                 session.ai_summary = summary
             except Exception as e:
                 logger.error(f"Failed to generate summary: {e}")
-                session.ai_summary = f"Falha ao gerar resumo: {str(e)}"
+                # Error message in appropriate language
+                if language_code == "en":
+                    session.ai_summary = f"Failed to generate summary: {str(e)}"
+                elif language_code == "es":
+                    session.ai_summary = f"Error al generar resumen: {str(e)}"
+                else:
+                    session.ai_summary = f"Falha ao gerar resumo: {str(e)}"
             
             # Step 2b: Generate title separately using all text content
             try:
                 all_text = "\n".join([b.get("text_content", "") for b in block_dicts if b.get("text_content")])
                 if all_text:
-                    suggested_title = provider.generate_title(all_text)
+                    suggested_title = provider.generate_title(all_text, language=language_code)
                     session.suggested_title = suggested_title
                     logger.info(f"Generated title for session {session_id}: {suggested_title}")
             except Exception as e:
                 logger.error(f"Failed to generate title: {e}")
                 fallback = all_text[:50] + "..." if len(all_text) > 50 else all_text
-                session.suggested_title = fallback if all_text else "Nota de voz"
+                # Fallback title in appropriate language
+                if language_code == "en":
+                    session.suggested_title = fallback if all_text else "Voice note"
+                elif language_code == "es":
+                    session.suggested_title = fallback if all_text else "Nota de voz"
+                else:
+                    session.suggested_title = fallback if all_text else "Nota de voz"
             
             # Mark AIJob as completed
             ai_job.status = AIJobStatus.COMPLETED
