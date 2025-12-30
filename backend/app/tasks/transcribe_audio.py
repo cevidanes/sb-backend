@@ -201,118 +201,118 @@ async def _transcribe_audio_async(session_id: str, ai_job_id: str):
                 
                 # Process each audio file
                 for audio_file in audio_files:
-                temp_file_path = None
-                wav_file_path = None
-                is_pcm = False
-                try:
-                    # Download audio file from R2 to temporary file
-                    # Determine if it's PCM format that needs conversion
-                    file_ext = "tmp"
+                    temp_file_path = None
+                    wav_file_path = None
                     is_pcm = False
-                    
-                    if audio_file.content_type:
-                        content_type_lower = audio_file.content_type.lower()
-                        if "pcm" in content_type_lower or "raw" in content_type_lower:
-                            is_pcm = True
-                            file_ext = "pcm"
-                        elif "m4a" in content_type_lower:
-                            file_ext = "m4a"
-                        elif "mp3" in content_type_lower:
-                            file_ext = "mp3"
-                        elif "wav" in content_type_lower:
-                            file_ext = "wav"
-                        elif "." in audio_file.object_key:
-                            file_ext = audio_file.object_key.split(".")[-1]
-                    else:
-                        # Try to extract from object_key
-                        if audio_file.object_key.endswith(".pcm"):
-                            is_pcm = True
-                            file_ext = "pcm"
-                        elif "." in audio_file.object_key:
-                            file_ext = audio_file.object_key.split(".")[-1]
-                    
-                    temp_file_path = os.path.join(tempfile.gettempdir(), f"audio_{audio_file.id}.{file_ext}")
-                    
-                    logger.info(f"Downloading audio file {audio_file.object_key} from R2 to {temp_file_path}...")
-                    # download_file is synchronous, run in thread pool to avoid blocking
-                    import asyncio
-                    download_success = await asyncio.to_thread(
-                        r2_client.download_file,
-                        audio_file.object_key,
-                        temp_file_path
-                    )
-                    if not download_success:
-                        logger.error(f"Failed to download audio file {audio_file.object_key}")
-                        transcriptions_failed += 1
-                        continue
-                    
-                    # Convert PCM to WAV if needed
-                    transcription_file_path = temp_file_path
-                    if is_pcm:
-                        wav_file_path = os.path.join(tempfile.gettempdir(), f"audio_{audio_file.id}.wav")
-                        logger.info(f"Converting PCM to WAV: {temp_file_path} -> {wav_file_path}")
-                        if convert_pcm_to_wav(temp_file_path, wav_file_path):
-                            transcription_file_path = wav_file_path
+                    try:
+                        # Download audio file from R2 to temporary file
+                        # Determine if it's PCM format that needs conversion
+                        file_ext = "tmp"
+                        is_pcm = False
+                        
+                        if audio_file.content_type:
+                            content_type_lower = audio_file.content_type.lower()
+                            if "pcm" in content_type_lower or "raw" in content_type_lower:
+                                is_pcm = True
+                                file_ext = "pcm"
+                            elif "m4a" in content_type_lower:
+                                file_ext = "m4a"
+                            elif "mp3" in content_type_lower:
+                                file_ext = "mp3"
+                            elif "wav" in content_type_lower:
+                                file_ext = "wav"
+                            elif "." in audio_file.object_key:
+                                file_ext = audio_file.object_key.split(".")[-1]
                         else:
-                            logger.error(f"Failed to convert PCM to WAV for {audio_file.object_key}")
+                            # Try to extract from object_key
+                            if audio_file.object_key.endswith(".pcm"):
+                                is_pcm = True
+                                file_ext = "pcm"
+                            elif "." in audio_file.object_key:
+                                file_ext = audio_file.object_key.split(".")[-1]
+                        
+                        temp_file_path = os.path.join(tempfile.gettempdir(), f"audio_{audio_file.id}.{file_ext}")
+                        
+                        logger.info(f"Downloading audio file {audio_file.object_key} from R2 to {temp_file_path}...")
+                        # download_file is synchronous, run in thread pool to avoid blocking
+                        import asyncio
+                        download_success = await asyncio.to_thread(
+                            r2_client.download_file,
+                            audio_file.object_key,
+                            temp_file_path
+                        )
+                        if not download_success:
+                            logger.error(f"Failed to download audio file {audio_file.object_key}")
                             transcriptions_failed += 1
                             continue
+                        
+                        # Convert PCM to WAV if needed
+                        transcription_file_path = temp_file_path
+                        if is_pcm:
+                            wav_file_path = os.path.join(tempfile.gettempdir(), f"audio_{audio_file.id}.wav")
+                            logger.info(f"Converting PCM to WAV: {temp_file_path} -> {wav_file_path}")
+                            if convert_pcm_to_wav(temp_file_path, wav_file_path):
+                                transcription_file_path = wav_file_path
+                            else:
+                                logger.error(f"Failed to convert PCM to WAV for {audio_file.object_key}")
+                                transcriptions_failed += 1
+                                continue
+                        
+                        # Transcribe audio with Groq Whisper
+                        # Get language from session, default to "pt" if not set
+                        session_language = session.language if session.language else "pt"
+                        # Map locale codes to language codes for Groq Whisper
+                        # Supported: pt, pt_BR -> pt; es_ES -> es; en_US -> en
+                        if session_language.startswith("pt"):
+                            language_code = "pt"
+                        elif session_language.startswith("es"):
+                            language_code = "es"
+                        elif session_language.startswith("en"):
+                            language_code = "en"
+                        else:
+                            # Extract first 2 characters as language code
+                            language_code = session_language[:2] if len(session_language) >= 2 else "pt"
+                        
+                        logger.info(f"Transcribing audio file {audio_file.object_key} (format: {'wav (converted from pcm)' if is_pcm else file_ext}) with language: {language_code}...")
+                        transcription_text = groq_provider.transcribe(
+                            transcription_file_path,
+                            language=language_code
+                        )
+                        
+                        # Create SessionBlock for transcription
+                        transcription_block = SessionBlock(
+                            session_id=session_id,
+                            block_type=BlockType.TRANSCRIPTION_BACKEND,
+                            text_content=transcription_text,
+                            media_url=audio_file.object_key,  # Reference to original audio
+                            _metadata=f'{{"media_file_id": "{audio_file.id}", "source": "groq_whisper"}}'
+                        )
+                        
+                        db.add(transcription_block)
+                        transcriptions_created += 1
+                        
+                        logger.info(
+                            f"Transcription created for audio {audio_file.id}: "
+                            f"{len(transcription_text)} chars"
+                        )
                     
-                    # Transcribe audio with Groq Whisper
-                    # Get language from session, default to "pt" if not set
-                    session_language = session.language if session.language else "pt"
-                    # Map locale codes to language codes for Groq Whisper
-                    # Supported: pt, pt_BR -> pt; es_ES -> es; en_US -> en
-                    if session_language.startswith("pt"):
-                        language_code = "pt"
-                    elif session_language.startswith("es"):
-                        language_code = "es"
-                    elif session_language.startswith("en"):
-                        language_code = "en"
-                    else:
-                        # Extract first 2 characters as language code
-                        language_code = session_language[:2] if len(session_language) >= 2 else "pt"
-                    
-                    logger.info(f"Transcribing audio file {audio_file.object_key} (format: {'wav (converted from pcm)' if is_pcm else file_ext}) with language: {language_code}...")
-                    transcription_text = groq_provider.transcribe(
-                        transcription_file_path,
-                        language=language_code
-                    )
-                    
-                    # Create SessionBlock for transcription
-                    transcription_block = SessionBlock(
-                        session_id=session_id,
-                        block_type=BlockType.TRANSCRIPTION_BACKEND,
-                        text_content=transcription_text,
-                        media_url=audio_file.object_key,  # Reference to original audio
-                        _metadata=f'{{"media_file_id": "{audio_file.id}", "source": "groq_whisper"}}'
-                    )
-                    
-                    db.add(transcription_block)
-                    transcriptions_created += 1
-                    
-                    logger.info(
-                        f"Transcription created for audio {audio_file.id}: "
-                        f"{len(transcription_text)} chars"
-                    )
-                    
-                except Exception as e:
-                    transcriptions_failed += 1
-                    logger.error(
-                        f"Failed to transcribe audio file {audio_file.id}: {e}",
-                        exc_info=True
-                    )
-                    # Continue with other files
-                    continue
-                finally:
-                    # Clean up temporary files
-                    for path in [temp_file_path, wav_file_path]:
-                        if path and os.path.exists(path):
-                            try:
-                                os.remove(path)
-                            except Exception as e:
-                                logger.warning(f"Failed to delete temp file {path}: {e}")
-            
+                    except Exception as e:
+                        transcriptions_failed += 1
+                        logger.error(
+                            f"Failed to transcribe audio file {audio_file.id}: {e}",
+                            exc_info=True
+                        )
+                        # Continue with other files
+                        continue
+                    finally:
+                        # Clean up temporary files
+                        for path in [temp_file_path, wav_file_path]:
+                            if path and os.path.exists(path):
+                                try:
+                                    os.remove(path)
+                                except Exception as e:
+                                    logger.warning(f"Failed to delete temp file {path}: {e}")
+                
                 # Commit all transcriptions
                 await db.commit()
                 
