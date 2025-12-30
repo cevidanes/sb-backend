@@ -106,11 +106,38 @@ async def init_db():
         logger = logging.getLogger(__name__)
         logger.warning(f"Error checking/creating vector extension: {e}")
     
-    # Handle enum modifications in a separate connection to avoid transaction issues
+    # Create sessionstatus enum if it doesn't exist
+    # This must be done before creating tables that use it
     try:
         async with engine.connect() as enum_conn:
-            try:
-                # Check if sessionstatus enum exists and what values it has
+            # Check if enum type exists
+            result = await enum_conn.execute(text("""
+                SELECT EXISTS(
+                    SELECT 1 FROM pg_type WHERE typname = 'sessionstatus'
+                )
+            """))
+            enum_exists = result.scalar()
+            
+            if not enum_exists:
+                # Create enum type with all values
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info("Creating sessionstatus enum type...")
+                await enum_conn.execute(text("""
+                    CREATE TYPE sessionstatus AS ENUM (
+                        'open',
+                        'pending_processing',
+                        'processing',
+                        'processed',
+                        'raw_only',
+                        'no_credits',
+                        'failed'
+                    )
+                """))
+                await enum_conn.commit()
+                logger.info("sessionstatus enum type created successfully")
+            else:
+                # Enum exists, check if all values are present and add missing ones
                 result = await enum_conn.execute(text("""
                     SELECT enumlabel 
                     FROM pg_enum 
@@ -118,64 +145,39 @@ async def init_db():
                     ORDER BY enumsortorder
                 """))
                 enum_values = [row[0] for row in result.fetchall()]
-                _log_debug(
-                    "database.py:75",
-                    "Database enum values at startup",
-                    {"enum_values": enum_values, "enum_exists": len(enum_values) > 0},
-                    "G"
-                )
                 
-                # If enum doesn't exist or doesn't have 'open', try to add it
-                if 'open' not in enum_values:
-                    _log_debug(
-                        "database.py:83",
-                        "Missing 'open' value, attempting to add",
-                        {"current_values": enum_values},
-                        "G"
-                    )
-                    try:
-                        # PostgreSQL doesn't support IF NOT EXISTS with ADD VALUE
-                        # So we wrap it in a DO block that checks first
-                        await enum_conn.execute(text("""
-                            DO $$
-                            BEGIN
-                                IF NOT EXISTS (
-                                    SELECT 1 FROM pg_enum 
-                                    WHERE enumlabel = 'open' 
-                                    AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'sessionstatus')
-                                ) THEN
-                                    ALTER TYPE sessionstatus ADD VALUE 'open';
-                                END IF;
-                            END $$;
-                        """))
-                        await enum_conn.commit()
-                        _log_debug(
-                            "database.py:100",
-                            "Successfully added 'open' to enum",
-                            {},
-                            "G"
-                        )
-                    except Exception as e:
-                        await enum_conn.rollback()
-                        _log_debug(
-                            "database.py:106",
-                            "Failed to add 'open' to enum",
-                            {"error": str(e), "error_type": type(e).__name__},
-                            "G"
-                        )
-            except Exception as e:
-                await enum_conn.rollback()
-                _log_debug(
-                    "database.py:101",
-                    "Error checking enum values",
-                    {"error": str(e), "error_type": type(e).__name__},
-                    "G"
-                )
+                # Required enum values
+                required_values = ['open', 'pending_processing', 'processing', 'processed', 'raw_only', 'no_credits', 'failed']
+                missing_values = [v for v in required_values if v not in enum_values]
+                
+                if missing_values:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"Adding missing enum values: {missing_values}")
+                    for value in missing_values:
+                        try:
+                            await enum_conn.execute(text(f"""
+                                DO $$
+                                BEGIN
+                                    IF NOT EXISTS (
+                                        SELECT 1 FROM pg_enum 
+                                        WHERE enumlabel = '{value}' 
+                                        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'sessionstatus')
+                                    ) THEN
+                                        ALTER TYPE sessionstatus ADD VALUE '{value}';
+                                    END IF;
+                                END $$;
+                            """))
+                            await enum_conn.commit()
+                        except Exception as e:
+                            await enum_conn.rollback()
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.warning(f"Could not add enum value '{value}': {e}")
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
-        logger.warning(f"Error handling enum modifications: {e}")
-    # #endregion agent log
+        logger.warning(f"Error handling enum creation: {e}")
     
     # Now use begin() for table creation - this should be safe now
     async with engine.begin() as conn:
