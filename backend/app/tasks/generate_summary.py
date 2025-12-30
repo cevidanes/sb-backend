@@ -297,6 +297,14 @@ async def _generate_summary_async(session_id: str, ai_job_id: str):
             # Extract first 2 characters as language code (e.g., "pt_BR" -> "pt", "en_US" -> "en")
             language_code = session_language[:2].lower() if len(session_language) >= 2 else "pt"
             
+            # Log language information for debugging
+            logger.info(
+                f"Generating summary for session {session_id}: "
+                f"session.language={session.language}, "
+                f"session_language={session_language}, "
+                f"language_code={language_code}"
+            )
+            
             # Step 2a: Generate enriched summary
             try:
                 summary = provider.summarize(block_dicts, language=language_code)

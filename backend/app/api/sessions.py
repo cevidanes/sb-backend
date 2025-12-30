@@ -45,11 +45,24 @@ async def create_session(
     """
     start_time = time.time()
     try:
+        # Log language being received from frontend
+        logger.info(
+            f"Creating session: type={session_data.session_type}, "
+            f"language={session_data.language}, user={current_user.id}"
+        )
+        
         session = await SessionService.create_session(
             db,
             session_type=session_data.session_type,
             user_id=current_user.id,
             language=session_data.language
+        )
+        
+        # Log language saved in session
+        logger.info(
+            f"Session created: id={session.id}, "
+            f"language={session.language}, "
+            f"type={session.session_type}"
         )
         
         # Record metrics
